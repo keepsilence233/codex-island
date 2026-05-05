@@ -5,7 +5,8 @@ import SwiftUI
 /// directly on the dark silhouette, like the logos.
 ///
 /// Renders one of three states:
-///   • value:    "32% · 2h"  (or "32%" when no resetAt is known)
+///   • value:    "32% · 2h"  (active countdown) or "0% · 5h" (window-length
+///               fallback at lower opacity when no active resetAt is known)
 ///   • loading:  small pulsing dot (only when `loading && usedPercent == 0`)
 ///   • errored:  "—%"         (when error is set and we have no value)
 ///
@@ -29,14 +30,15 @@ struct NotchPeekPill: View {
                     Text(percentText)
                         .font(Typography.bodyNumber)
                         .foregroundStyle(tint)
-                    if let reset = resetText {
-                        Text("·")
-                            .font(Typography.bodyNumber)
-                            .foregroundStyle(.white.opacity(0.40))
-                        Text(reset)
-                            .font(Typography.bodyNumber)
-                            .foregroundStyle(.white.opacity(0.70))
-                    }
+                    Text("·")
+                        .font(Typography.bodyNumber)
+                        .foregroundStyle(.white.opacity(0.40))
+                    // Lower opacity on the fallback differentiates a passive
+                    // "5-hour window" label from an active "5h until reset"
+                    // countdown — same glyph shape, weaker visual presence.
+                    Text(resetText ?? "5h")
+                        .font(Typography.bodyNumber)
+                        .foregroundStyle(.white.opacity(resetText == nil ? 0.45 : 0.70))
                 }
             }
         }
