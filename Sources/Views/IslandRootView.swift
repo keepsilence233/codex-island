@@ -52,7 +52,12 @@ struct IslandRootView: View {
                                 lineWidth: 0.5
                             )
                     }
-                    .shadow(color: glowColor.opacity(0.35), radius: 14, y: 0)
+                    // Halo fully suppressed under Low Power Mode — alerts
+                    // don't override LPM. The LoadingSweep (also LPM-gated
+                    // to fetches only) carries the alert tint when it
+                    // appears, so the user still gets a colored signal
+                    // during refreshes.
+                    .shadow(color: glowColor.opacity(lowPower.enabled ? 0 : 0.35), radius: 14, y: 0)
                     // Cross-fade the glow hue when severity steps cobalt →
                     // amber → red. Without this, a 79% → 80% refresh tick
                     // visibly snaps; with it, the boundary feels like a

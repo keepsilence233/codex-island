@@ -225,34 +225,9 @@ struct SettingsView: View {
                     }
                 }
             }
-            SettingsRow(
-                title: "Warning at",
-                subtitle: "Glow turns amber when 5-hour usage crosses this percent."
-            ) {
-                thresholdStepper(
-                    value: Binding(
-                        get: { alertPrefs.warningPercent },
-                        set: { alertPrefs.warningPercent = $0 }
-                    ),
-                    range: warningStepperRange
-                )
-            }
-            .disabled(!alertPrefs.enabled)
-            .opacity(alertPrefs.enabled ? 1.0 : 0.45)
-            SettingsRow(
-                title: "Critical at",
-                subtitle: "Glow turns red when 5-hour usage crosses this percent."
-            ) {
-                thresholdStepper(
-                    value: Binding(
-                        get: { alertPrefs.criticalPercent },
-                        set: { alertPrefs.criticalPercent = $0 }
-                    ),
-                    range: criticalStepperRange
-                )
-            }
-            .disabled(!alertPrefs.enabled)
-            .opacity(alertPrefs.enabled ? 1.0 : 0.45)
+            thresholdsBlock
+                .disabled(!alertPrefs.enabled)
+                .opacity(alertPrefs.enabled ? 1.0 : 0.40)
             if alertPrefs.enabled && isDevMode {
                 SettingsRow(
                     title: "Preview",
@@ -318,6 +293,59 @@ struct SettingsView: View {
         usage.injectPreviewUsage(claudeFiveHour: claude, codexFiveHour: codex)
     }
 
+    /// Single paired block listing both thresholds inline, each tagged
+    /// with its own colored dot so the visual mapping (amber → warning,
+    /// red → critical) reads at a glance. Replaces what used to be two
+    /// near-duplicate SettingsRows whose subtitles only differed by one
+    /// word.
+    private var thresholdsBlock: some View {
+        VStack(spacing: 6) {
+            thresholdLine(
+                color: IslandColor.alertAmber,
+                label: "Warning",
+                value: Binding(
+                    get: { alertPrefs.warningPercent },
+                    set: { alertPrefs.warningPercent = $0 }
+                ),
+                range: warningStepperRange
+            )
+            thresholdLine(
+                color: IslandColor.alertRed,
+                label: "Critical",
+                value: Binding(
+                    get: { alertPrefs.criticalPercent },
+                    set: { alertPrefs.criticalPercent = $0 }
+                ),
+                range: criticalStepperRange
+            )
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private func thresholdLine(
+        color: Color,
+        label: String,
+        value: Binding<Int>,
+        range: ClosedRange<Int>
+    ) -> some View {
+        HStack(spacing: 10) {
+            Circle()
+                .fill(color)
+                .frame(width: 7, height: 7)
+                .shadow(color: color.opacity(0.7), radius: 4)
+                .accessibilityHidden(true)
+            Text(label)
+                .font(Typography.rowTitle)
+                .tracking(-0.07)
+                .foregroundStyle(.white.opacity(0.92))
+            Spacer(minLength: 8)
+            thresholdStepper(value: value, range: range)
+        }
+        .padding(.vertical, 5)
+    }
+
     /// Warning's upper bound is `critical - 1` so the steppers can't drift
     /// the pair into an invalid state. Same idea in reverse for critical.
     private var warningStepperRange: ClosedRange<Int> {
@@ -347,45 +375,25 @@ struct SettingsView: View {
                 value.wrappedValue = max(range.lowerBound, min(range.upperBound, newValue))
             }
         )
-        HStack(spacing: 4) {
-            // Fixed-frame container around the TextField so the focus
-            // indicator's internal padding doesn't propagate into the
-            // surrounding HStack and shift the % glyph + chevrons. The
-            // TextField fills this frame and has its own intrinsic size
-            // calculation suppressed via .frame's `maxWidth`/`maxHeight`.
+        HStack(spacing: 3) {
             TextField("", value: clamped, format: .number)
                 .textFieldStyle(.plain)
-                .multilineTextAlignment(.trailing)
+                .multilineTextAlignment(.center)
                 .font(Typography.bodyNumber)
-                .foregroundStyle(.white.opacity(0.92))
+                .foregroundStyle(.white.opacity(0.95))
                 .monospacedDigit()
-                .frame(width: 24, height: 16)
+                .frame(width: 22, height: 18)
                 .clipped()
             Text("%")
                 .font(Typography.bodyNumber)
                 .foregroundStyle(.white.opacity(0.55))
-            VStack(spacing: 1) {
-                RepeatingChevronButton(systemName: "chevron.up") {
-                    if value.wrappedValue < range.upperBound {
-                        value.wrappedValue += 1
-                    }
-                }
-                RepeatingChevronButton(systemName: "chevron.down") {
-                    if value.wrappedValue > range.lowerBound {
-                        value.wrappedValue -= 1
-                    }
-                }
-            }
-            .padding(.leading, 2)
         }
-        .fixedSize()
-        .padding(.horizontal, 8)
-        .padding(.vertical, 3)
+        .frame(width: 64, height: 28)
         .background {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(.white.opacity(0.06))
+            RoundedRectangle(cornerRadius: 7)
+                .fill(.white.opacity(0.05))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 6)
+                    RoundedRectangle(cornerRadius: 7)
                         .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
                 }
         }
