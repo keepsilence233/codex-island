@@ -22,32 +22,14 @@ enum CostStyle: String, CaseIterable {
 }
 
 @MainActor
-final class CostStylePref: ObservableObject {
+final class CostStylePref: StylePreferenceStore<CostStyle> {
     static let shared = CostStylePref()
 
-    private static let styleKey = "MacIsland.costStyle"
-    private static let cycledKey = "MacIsland.costStyleCycled"
-
-    @Published var style: CostStyle {
-        didSet { UserDefaults.standard.set(style.rawValue, forKey: Self.styleKey) }
-    }
-    @Published var hasCycledStyle: Bool {
-        didSet { UserDefaults.standard.set(hasCycledStyle, forKey: Self.cycledKey) }
-    }
-
     private init() {
-        let raw = UserDefaults.standard.string(forKey: Self.styleKey) ?? ""
-        self.style = CostStyle(rawValue: raw) ?? .dollar
-        // See ScreenPref: demo mode keeps the ⌘-click hint visible.
-        let demo = ProcessInfo.processInfo.environment["CODEXISLAND_DEMO"] == "1"
-        self.hasCycledStyle = demo ? false : UserDefaults.standard.bool(forKey: Self.cycledKey)
-    }
-
-    func cycle() {
-        let all = CostStyle.allCases
-        if let i = all.firstIndex(of: style) {
-            style = all[(i + 1) % all.count]
-        }
-        if !hasCycledStyle { hasCycledStyle = true }
+        super.init(
+            styleKey: "MacIsland.costStyle",
+            cycledKey: "MacIsland.costStyleCycled",
+            defaultStyle: .dollar
+        )
     }
 }

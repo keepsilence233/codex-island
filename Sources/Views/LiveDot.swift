@@ -10,21 +10,31 @@ struct LiveDot: View {
     @State private var syncBump: CGFloat = 1.0
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { context in
-            let phase = context.date.timeIntervalSinceReferenceDate
-            // sin(phase * 2.6) ≈ 2.4s breath cycle. Slow enough to feel
-            // like a heartbeat at rest, not a strobe.
-            let pulse = 0.6 + 0.4 * (sin(phase * 2.6) * 0.5 + 0.5)
-            ZStack {
+        Group {
+            if active {
+                TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { context in
+                    let phase = context.date.timeIntervalSinceReferenceDate
+                    // sin(phase * 2.6) ≈ 2.4s breath cycle. Slow enough to
+                    // feel like a heartbeat at rest, not a strobe.
+                    let pulse = 0.6 + 0.4 * (sin(phase * 2.6) * 0.5 + 0.5)
+                    ZStack {
+                        Circle()
+                            .fill(IslandColor.liveTeal.opacity(0.9))
+                        Circle()
+                            .stroke(IslandColor.liveTeal, lineWidth: 1)
+                            .scaleEffect(CGFloat(1 + pulse * 0.6))
+                            .opacity(0.55 * (1 - pulse))
+                    }
+                    .frame(width: 6, height: 6)
+                    .shadow(color: IslandColor.liveTeal.opacity(0.55), radius: 3)
+                }
+            } else {
+                // Static dim circle when inactive — no TimelineView, no
+                // breath cycle, no halo. Cheap.
                 Circle()
-                    .fill(active ? IslandColor.liveTeal.opacity(0.9) : Color.white.opacity(0.25))
-                Circle()
-                    .stroke(active ? IslandColor.liveTeal : .clear, lineWidth: 1)
-                    .scaleEffect(active ? CGFloat(1 + pulse * 0.6) : 1)
-                    .opacity(active ? 0.55 * (1 - pulse) : 0)
+                    .fill(Color.white.opacity(0.25))
+                    .frame(width: 6, height: 6)
             }
-            .frame(width: 6, height: 6)
-            .shadow(color: active ? IslandColor.liveTeal.opacity(0.55) : .clear, radius: 3)
         }
         .scaleEffect(syncBump)
         // Two-phase bump on each fresh sync: snap up to 1.18, then settle

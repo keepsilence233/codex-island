@@ -98,7 +98,7 @@ struct ChartTile: View {
     private func subCaption() -> String {
         if let r = window.resetAt {
             let delta = max(0, r.timeIntervalSinceNow)
-            return "resets in \(formatDelta(delta))"
+            return "resets in \(Duration.compact(delta))"
         }
         // "no data" is our internal sentinel for "API returned null for this
         // window" — most commonly a brand-new 5h period before the first
@@ -107,12 +107,5 @@ struct ChartTile: View {
         // window type) instead of looking broken. Real errors still surface.
         if let err = window.error, err != "no data" { return err }
         return ""
-    }
-
-    private func formatDelta(_ s: TimeInterval) -> String {
-        if s < 60 { return "\(Int(s))s" }
-        if s < 3600 { return "\(Int(s/60))m" }
-        if s < 86400 { return "\(Int(s/3600))h" }
-        return "\(Int(s/86400))d"
     }
 }

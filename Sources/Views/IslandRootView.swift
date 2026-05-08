@@ -19,8 +19,6 @@ struct IslandRootView: View {
     @State private var claudeLogo: NSImage?
     @State private var openaiLogo: NSImage?
 
-    static let tabWidth: CGFloat = 38
-
     var body: some View {
         VStack(spacing: 0) {
             // Only the rotating loading sweep needs per-frame re-renders
@@ -347,7 +345,7 @@ struct IslandRootView: View {
         if window.error != nil && window.usedPercent == 0 {
             return "\(provider): no data for 5-hour window"
         }
-        let pct = Int((window.usedPercent * 100).rounded())
+        let pct = window.percentInt
         guard let resetAt = window.resetAt else {
             return "\(provider): \(pct) percent of 5-hour window used"
         }

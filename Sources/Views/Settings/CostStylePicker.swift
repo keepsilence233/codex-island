@@ -10,53 +10,20 @@ struct CostStylePicker: View {
     var body: some View {
         HStack(spacing: 6) {
             ForEach(CostStyle.allCases, id: \.self) { style in
-                tile(for: style)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private func tile(for style: CostStyle) -> some View {
-        let isOn = (style == selected)
-        Button {
-            selected = style
-            if !CostStylePref.shared.hasCycledStyle {
-                CostStylePref.shared.hasCycledStyle = true
-            }
-        } label: {
-            VStack(spacing: 7) {
-                preview(for: style)
-                    .frame(height: 34)
-                    .accessibilityHidden(true)
-                Text(style.label)
-                    .font(Typography.micro)
-                    .foregroundStyle(isOn
-                        ? Color(red: 0.58, green: 0.75, blue: 1.0)
-                        : .white.opacity(0.55))
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 14)
-            .padding(.horizontal, 6)
-            .padding(.bottom, 10)
-            .background {
-                RoundedRectangle(cornerRadius: 9)
-                    .fill(isOn
-                          ? IslandColor.cobalt.opacity(0.14)
-                          : .white.opacity(0.025))
-                    .overlay {
-                        RoundedRectangle(cornerRadius: 9)
-                            .strokeBorder(isOn
-                                ? IslandColor.cobalt.opacity(0.6)
-                                : .clear, lineWidth: 1)
+                StyleTile(
+                    label: style.label,
+                    isOn: style == selected,
+                    action: {
+                        selected = style
+                        if !CostStylePref.shared.hasCycledStyle {
+                            CostStylePref.shared.hasCycledStyle = true
+                        }
                     }
-                    .shadow(color: isOn
-                            ? IslandColor.cobalt.opacity(0.18)
-                            : .clear, radius: 9)
+                ) {
+                    preview(for: style)
+                }
             }
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel(style.label)
-        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
     }
 
     @ViewBuilder

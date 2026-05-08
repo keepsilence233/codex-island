@@ -428,24 +428,7 @@ struct SettingsView: View {
                 title: "Check now",
                 subtitle: "Look for a new version immediately."
             ) {
-                Button {
-                    updater.checkForUpdates()
-                } label: {
-                    Text("Check")
-                        .font(Typography.button)
-                        .foregroundStyle(.white.opacity(0.9))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
-                        .background {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(.white.opacity(0.10))
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 6)
-                                        .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
-                                }
-                        }
-                }
-                .buttonStyle(.plain)
+                PillButton(label: "Check") { updater.checkForUpdates() }
             }
         }
         .padding(.horizontal, 14)
@@ -513,38 +496,12 @@ struct SettingsView: View {
     }
 
     private var tokenModeSegmented: some View {
-        HStack(spacing: 0) {
-            ForEach(TokenCountMode.allCases, id: \.self) { mode in
-                let isOn = (mode == tokenMode.mode)
-                Button {
-                    tokenMode.mode = mode
-                } label: {
-                    Text(mode.label)
-                        .font(Typography.bodyNumber)
-                        .foregroundStyle(isOn
-                            ? Color.white.opacity(0.95)
-                            : .white.opacity(0.55))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(isOn ? .white.opacity(0.10) : .clear)
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .strokeBorder(.white.opacity(isOn ? 0.08 : 0), lineWidth: 0.5)
-                                }
-                        }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Token counting, \(mode.label)")
-                .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
-            }
-        }
-        .padding(2)
-        .background {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(.white.opacity(0.04))
-        }
+        SegmentedControl(
+            items: TokenCountMode.allCases,
+            selected: $tokenMode.mode,
+            label: { $0.label },
+            accessibilityPrefix: "Token counting"
+        )
     }
 
     /// Single-row Cost section. Re-uses the section-label typography on the
@@ -566,26 +523,10 @@ struct SettingsView: View {
 
             Spacer(minLength: 8)
 
-            Button {
-                cost.refresh()
-            } label: {
-                Text(cost.loading ? "Refreshing…" : "Refresh")
-                    .font(Typography.button)
-                    .foregroundStyle(.white.opacity(0.9))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .background {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(.white.opacity(0.10))
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 6)
-                                    .strokeBorder(.white.opacity(0.08), lineWidth: 0.5)
-                            }
-                    }
-            }
-            .buttonStyle(.plain)
-            .disabled(cost.loading)
-            .opacity(cost.loading ? 0.55 : 1)
+            PillButton(
+                label: cost.loading ? "Refreshing…" : "Refresh",
+                isLoading: cost.loading
+            ) { cost.refresh() }
         }
         .padding(.horizontal, 24)
         .padding(.top, 14)
@@ -598,14 +539,18 @@ struct SettingsView: View {
     /// could meaningfully drift from reality.
     private static let pricingFreshnessThreshold = 60
 
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .abbreviated
+        return f
+    }()
+
     private func costSubtitle() -> String {
         let base: String
         if cost.loading {
             base = "scanning local logs…"
         } else if let updated = cost.lastUpdated {
-            let f = RelativeDateTimeFormatter()
-            f.unitsStyle = .abbreviated
-            base = "last scan \(f.localizedString(for: updated, relativeTo: Date()))"
+            base = "last scan \(Self.relativeFormatter.localizedString(for: updated, relativeTo: Date()))"
         } else {
             base = "swipe panel to view"
         }
@@ -655,45 +600,15 @@ struct SettingsView: View {
         .padding(.bottom, 14)
     }
 
+    /// Default-on-the-left: Compact is the new default, so it sits left
+    /// of Notch-style.
     private var spacingSegmented: some View {
-        // Default-on-the-left: Compact is the new default, so it sits
-        // left of Notch-style.
-        HStack(spacing: 0) {
-            spacingSegment(.compact, label: "Compact")
-            spacingSegment(.notchStyle, label: "Notch-style")
-        }
-        .padding(2)
-        .background {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(.white.opacity(0.04))
-        }
-    }
-
-    @ViewBuilder
-    private func spacingSegment(_ mode: IslandSpacingStore.Mode, label: String) -> some View {
-        let isOn = (mode == spacing.mode)
-        Button {
-            spacing.mode = mode
-        } label: {
-            Text(label)
-                .font(Typography.bodyNumber)
-                .foregroundStyle(isOn
-                    ? Color.white.opacity(0.95)
-                    : .white.opacity(0.55))
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background {
-                    RoundedRectangle(cornerRadius: 5)
-                        .fill(isOn ? .white.opacity(0.10) : .clear)
-                        .overlay {
-                            RoundedRectangle(cornerRadius: 5)
-                                .strokeBorder(.white.opacity(isOn ? 0.08 : 0), lineWidth: 0.5)
-                        }
-                }
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Island width, \(label)")
-        .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
+        SegmentedControl(
+            items: [IslandSpacingStore.Mode.compact, .notchStyle],
+            selected: $spacing.mode,
+            label: { $0 == .compact ? "Compact" : "Notch-style" },
+            accessibilityPrefix: "Island width"
+        )
     }
 
     private var targetDisplaySection: some View {
@@ -728,8 +643,9 @@ struct SettingsView: View {
 
     private var targetDisplayPicker: some View {
         let displays = DisplayInfo.all()
+        let autoTag = IslandTargetDisplayStore.Choice.auto.rawValue
         return Picker("", selection: pickerSelection) {
-            Text("Auto").tag("auto")
+            Text("Auto").tag(autoTag)
             ForEach(displays, id: \.stableID) { d in
                 Text(d.isBuiltin ? "\(d.name) (built-in)" : d.name)
                     .tag(d.stableID)
@@ -742,20 +658,12 @@ struct SettingsView: View {
     }
 
     /// Bridges the enum `Choice` to a `String` selection that SwiftUI's
-    /// `Picker` can use as tags. "auto" is the sentinel for `.auto`; any
-    /// other value is a stableID of a connected display.
+    /// `Picker` can use as tags.
     private var pickerSelection: Binding<String> {
         Binding(
-            get: {
-                switch targetDisplay.choice {
-                case .auto:           return "auto"
-                case .stable(let id): return id
-                }
-            },
+            get: { targetDisplay.choice.rawValue },
             set: { newValue in
-                targetDisplay.choice = newValue == "auto"
-                    ? .auto
-                    : .stable(id: newValue)
+                targetDisplay.choice = IslandTargetDisplayStore.Choice(rawValue: newValue)
             }
         )
     }
@@ -763,41 +671,15 @@ struct SettingsView: View {
     // MARK: - Refresh segmented
 
     private var refreshSegmented: some View {
-        HStack(spacing: 0) {
-            ForEach(RefreshIntervalStore.allowed, id: \.self) { value in
-                let isOn = (value == refreshStore.seconds)
-                Button {
-                    refreshStore.seconds = value
-                } label: {
-                    Text(label(for: value))
-                        .font(Typography.bodyNumber)
-                        .foregroundStyle(isOn
-                            ? Color.white.opacity(0.95)
-                            : .white.opacity(0.55))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 5)
-                        .background {
-                            RoundedRectangle(cornerRadius: 5)
-                                .fill(isOn ? .white.opacity(0.10) : .clear)
-                                .overlay {
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .strokeBorder(.white.opacity(isOn ? 0.08 : 0), lineWidth: 0.5)
-                                }
-                        }
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Refresh interval, \(label(for: value))")
-                .accessibilityAddTraits(isOn ? [.isButton, .isSelected] : .isButton)
-            }
-        }
-        .padding(2)
-        .background {
-            RoundedRectangle(cornerRadius: 7)
-                .fill(.white.opacity(0.04))
-        }
+        SegmentedControl(
+            items: RefreshIntervalStore.allowed,
+            selected: $refreshStore.seconds,
+            label: { Self.label(for: $0) },
+            accessibilityPrefix: "Refresh interval"
+        )
     }
 
-    private func label(for seconds: Int) -> String {
+    private static func label(for seconds: Int) -> String {
         switch seconds {
         case 300: return "5m"
         case 900: return "15m"
@@ -811,11 +693,9 @@ struct SettingsView: View {
     private func providerSubtitle(_ u: AppUsage) -> String {
         let synced: String = {
             guard let updated = usage.lastUpdated else { return "idle" }
-            let f = RelativeDateTimeFormatter()
-            f.unitsStyle = .abbreviated
-            return "synced \(f.localizedString(for: updated, relativeTo: Date()))"
+            return "synced \(Self.relativeFormatter.localizedString(for: updated, relativeTo: Date()))"
         }()
-        let nums = "\(Int(u.fiveHour.usedPercent * 100))% / \(Int(u.weekly.usedPercent * 100))%"
+        let nums = "\(u.fiveHour.percentInt)% / \(u.weekly.percentInt)%"
         return "\(synced) · \(nums)"
     }
 }

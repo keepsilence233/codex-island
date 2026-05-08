@@ -72,10 +72,6 @@ final class IslandModel: ObservableObject {
     }
 
     /// Re-applies the override and re-computes size whenever the user
-    /// changes spacing mode. Wrapped in `withAnimation(.openMorph)` so
-    /// the silhouette springs to its new width with the same feel as a
-    /// state morph (compact ↔ peek ↔ expanded).
-    /// Re-applies the override and re-computes size whenever the user
     /// changes spacing mode. The `mode` value here is the *new* value from
     /// the closure parameter — `IslandSpacingStore.shared.mode` would be
     /// the *old* value at this point because `@Published` emits during

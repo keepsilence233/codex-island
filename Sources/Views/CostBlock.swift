@@ -270,7 +270,6 @@ struct CostTile: View {
 
     private func formatBarDollars(_ v: Double) -> String {
         if v < 10 { return String(format: "$%.2f", v) }
-        if v < 1000 { return String(format: "$%.0f", v) }
         return String(format: "$%.0f", v)
     }
 

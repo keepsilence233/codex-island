@@ -109,7 +109,7 @@ struct NotchPeekPill: View {
     }
 
     private var percentText: String {
-        "\(Int((usage.usedPercent * 100).rounded()))%"
+        "\(usage.percentInt)%"
     }
 
     /// `Nh` when ≥ 1h remaining, `Nm` under 1h. Returns nil if there's no

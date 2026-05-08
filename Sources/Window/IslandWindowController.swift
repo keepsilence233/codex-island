@@ -7,10 +7,12 @@ final class IslandWindowController {
     let window: NSWindow
     let model: IslandModel
     private let host: IslandHostingView
-    private var mouseMonitor: Any?
+    private var localMouseMonitor: Any?
+    private var globalMouseMonitor: Any?
     private var trackingTimer: Timer?
     private var screenChangeObserver: NSObjectProtocol?
     private var subs: Set<AnyCancellable> = []
+    private var hasSeenMouseEvent = false
 
     static let windowSize = CGSize(width: 900, height: 280)
 
@@ -52,6 +54,9 @@ final class IslandWindowController {
         if let observer = screenChangeObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let m = globalMouseMonitor { NSEvent.removeMonitor(m) }
+        if let m = localMouseMonitor { NSEvent.removeMonitor(m) }
+        trackingTimer?.invalidate()
     }
 
     /// Click-through for everything outside the visible shape. We watch cursor
@@ -65,19 +70,32 @@ final class IslandWindowController {
         window.ignoresMouseEvents = true
 
         let handler: (NSEvent) -> Void = { [weak self] _ in
-            Task { @MainActor in self?.updateMouseEventsBasedOnCursor() }
+            Task { @MainActor in
+                guard let self else { return }
+                self.hasSeenMouseEvent = true
+                self.invalidateTrackingTimerIfReady()
+                self.updateMouseEventsBasedOnCursor()
+            }
         }
-        NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: handler)
-        mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { event in
+        globalMouseMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.mouseMoved], handler: handler)
+        localMouseMonitor = NSEvent.addLocalMonitorForEvents(matching: [.mouseMoved]) { event in
             handler(event)
             return event
         }
 
         // Polling safety net for the case where the cursor is already inside
         // the shape area at launch — no mouseMoved event would otherwise fire.
+        // Self-invalidates once any real mouseMoved arrives, so steady-state
+        // doesn't pay the 10Hz timer cost forever.
         trackingTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.updateMouseEventsBasedOnCursor() }
         }
+    }
+
+    private func invalidateTrackingTimerIfReady() {
+        guard hasSeenMouseEvent, let timer = trackingTimer else { return }
+        timer.invalidate()
+        trackingTimer = nil
     }
 
     private func updateMouseEventsBasedOnCursor() {

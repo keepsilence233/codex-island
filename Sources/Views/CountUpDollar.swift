@@ -19,22 +19,29 @@ struct CountUpDollar: View {
     @State private var animationStart: Date = Date()
     @State private var startValue: Double = 0
     @State private var lastSeenTarget: Double = 0
+    /// Gates the 60Hz TimelineView. Once the count settles we render a
+    /// plain `Text` so SwiftUI stops re-evaluating this body 60 times per
+    /// second. Four cost cells each running idle TimelineViews adds up.
+    @State private var animating: Bool = false
+    @State private var animationToken: UUID = UUID()
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
-            let elapsed = context.date.timeIntervalSince(animationStart)
-            let displayed = interpolatedValue(elapsed: elapsed)
-            Text(formatted(displayed))
-                .font(Typography.bigNumber)
-                .foregroundStyle(color)
-                .shadow(color: color.opacity(glowOpacity), radius: 6)
-                .shadow(color: color.opacity(glowOpacity * 0.5), radius: 14)
+        Group {
+            if animating {
+                TimelineView(.animation(minimumInterval: 1.0 / 60.0)) { context in
+                    let elapsed = context.date.timeIntervalSince(animationStart)
+                    digits(formatted(interpolatedValue(elapsed: elapsed)))
+                }
+            } else {
+                digits(formatted(lastSeenTarget))
+            }
         }
         .onAppear {
             // Slot-machine reveal on first hover: rip from $0 up to current.
             startValue = 0
             animationStart = Date()
             lastSeenTarget = target
+            startAnimation()
         }
         .onChange(of: target) { _ in
             // Smooth update during a refresh — count from where the eye
@@ -42,6 +49,28 @@ struct CountUpDollar: View {
             startValue = lastSeenTarget
             animationStart = Date()
             lastSeenTarget = target
+            startAnimation()
+        }
+    }
+
+    @ViewBuilder
+    private func digits(_ text: String) -> some View {
+        Text(text)
+            .font(Typography.bigNumber)
+            .foregroundStyle(color)
+            .shadow(color: color.opacity(glowOpacity), radius: 6)
+            .shadow(color: color.opacity(glowOpacity * 0.5), radius: 14)
+    }
+
+    private func startAnimation() {
+        animating = true
+        let token = UUID()
+        animationToken = token
+        // Settle slightly past `duration` so the final frame definitely
+        // renders the target value before the TimelineView is torn down.
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.duration + 0.05) {
+            guard animationToken == token else { return }
+            animating = false
         }
     }
 

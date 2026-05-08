@@ -23,6 +23,8 @@ final class CostStore: ObservableObject {
     var loading: Bool { claudeLoading || codexLoading }
 
     private static let cacheKey = "MacIsland.costCache.v3"
+    private static let cacheEncoder = JSONEncoder()
+    private static let cacheDecoder = JSONDecoder()
     private var pollTimer: Timer?
     private var intervalCancellable: AnyCancellable?
 
@@ -285,14 +287,14 @@ final class CostStore: ObservableObject {
             codexMonthUnknown: codex.month.unknownModels,
             lastUpdated: lastUpdated
         )
-        if let data = try? JSONEncoder().encode(snap) {
+        if let data = try? Self.cacheEncoder.encode(snap) {
             UserDefaults.standard.set(data, forKey: Self.cacheKey)
         }
     }
 
     private func restoreFromCache() {
         guard let data = UserDefaults.standard.data(forKey: Self.cacheKey),
-              let snap = try? JSONDecoder().decode(CacheSnapshot.self, from: data)
+              let snap = try? Self.cacheDecoder.decode(CacheSnapshot.self, from: data)
         else { return }
 
         self.claude = ProviderCost(

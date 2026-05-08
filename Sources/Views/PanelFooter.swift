@@ -180,9 +180,13 @@ struct PanelFooter: View {
         return "Idle"
     }
 
-    private func relative(_ d: Date) -> String {
+    private static let relativeFormatter: RelativeDateTimeFormatter = {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .abbreviated
-        return f.localizedString(for: d, relativeTo: Date())
+        return f
+    }()
+
+    private func relative(_ d: Date) -> String {
+        Self.relativeFormatter.localizedString(for: d, relativeTo: Date())
     }
 }

@@ -219,7 +219,7 @@ final class AlertEngine: ObservableObject {
             if input.window.error != nil && input.window.usedPercent == 0 {
                 continue
             }
-            let pct = Int((input.window.usedPercent * 100).rounded())
+            let pct = input.window.percentInt
             if pct >= critical {
                 out[input.provider] = .critical
             } else if pct >= warning {
@@ -274,7 +274,7 @@ final class AlertEngine: ObservableObject {
             if input.window.error != nil && input.window.usedPercent == 0 {
                 continue
             }
-            let pct = Int((input.window.usedPercent * 100).rounded())
+            let pct = input.window.percentInt
 
             for threshold in [Threshold.warning, Threshold.critical] {
                 let bound = (threshold == .warning) ? warning : critical

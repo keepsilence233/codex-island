@@ -8,7 +8,7 @@ enum UsageFetcher {
     /// and rarely rate-limited, so this is the easy half of the integration.
     static func fetchCodex() async -> AppUsage {
         guard let token = readCodexAccessToken() else {
-            return codexErrorPair("no codex auth")
+            return errorPair("no codex auth")
         }
 
         var req = URLRequest(url: URL(string: "https://chatgpt.com/backend-api/wham/usage")!)
@@ -22,15 +22,15 @@ enum UsageFetcher {
             // The Codex CLI rotates this token on its own — there's nothing
             // we can do from here, so surface the exact remediation step.
             if status == 401 {
-                return codexErrorPair("auth expired — codex login")
+                return errorPair("auth expired — codex login")
             }
             if status != 200 {
-                return codexErrorPair("http \(status)")
+                return errorPair("http \(status)")
             }
 
             guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                   let rl = obj["rate_limit"] as? [String: Any] else {
-                return codexErrorPair("parse error")
+                return errorPair("parse error")
             }
             return AppUsage(
                 fiveHour: parseCodexWindow(rl["primary_window"]),
@@ -38,11 +38,11 @@ enum UsageFetcher {
                 plan: obj["plan_type"] as? String
             )
         } catch {
-            return codexErrorPair(error.localizedDescription)
+            return errorPair(error.localizedDescription)
         }
     }
 
-    private static func codexErrorPair(_ message: String) -> AppUsage {
+    private static func errorPair(_ message: String) -> AppUsage {
         AppUsage(
             fiveHour: WindowUsage(usedPercent: 0, resetAt: nil, error: message),
             weekly: WindowUsage(usedPercent: 0, resetAt: nil, error: message)
@@ -132,10 +132,7 @@ enum UsageFetcher {
             }
         }
 
-        return AppUsage(
-            fiveHour: WindowUsage(usedPercent: 0, resetAt: nil, error: lastError),
-            weekly: WindowUsage(usedPercent: 0, resetAt: nil, error: lastError)
-        )
+        return errorPair(lastError)
     }
 
     private enum FetchOutcome {
