@@ -6,6 +6,10 @@ cd "$(dirname "$0")"
 APP_NAME="CodexIsland"
 BUNDLE_ID="dev.codexisland.CodexIsland"
 VERSION="$(cat VERSION)"
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: VERSION must be X.Y.Z (got '$VERSION')" >&2
+  exit 1
+fi
 BUILD_DIR="./build"
 APP_DIR="$BUILD_DIR/$APP_NAME.app"
 CONTENTS="$APP_DIR/Contents"
