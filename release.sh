@@ -70,6 +70,14 @@ if [[ -x "$SIGN_TOOL" && $have_key -eq 1 ]]; then
   SIG_LINE="$("$SIGN_TOOL" ${sign_args[@]+"${sign_args[@]}"} "$DMG")"
   EDSIG="$(echo "$SIG_LINE" | sed -n 's/.*sparkle:edSignature="\([^"]*\)".*/\1/p')"
 
+  # set -euo pipefail only catches non-zero exits; sign_update can exit 0 with
+  # malformed output, which would ship an appcast Sparkle clients reject silently.
+  if [[ -z "${EDSIG:-}" ]]; then
+    echo "error: sign_update produced empty EdDSA signature; aborting release" >&2
+    echo "  raw output: $SIG_LINE" >&2
+    exit 1
+  fi
+
   RELEASE_URL="https://github.com/ericjypark/codex-island/releases/download/v${VERSION}/$(basename "$DMG")"
   PUBDATE="$(LC_TIME=en_US.UTF-8 date -u "+%a, %d %b %Y %H:%M:%S +0000")"
 
