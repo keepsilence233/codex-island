@@ -385,11 +385,16 @@ struct IslandRootView: View {
 }
 
 /// Cobalt angular-gradient sweep that orbits the silhouette while data is
-/// fetching. Owns its own TimelineView so the parent (IslandRootView) doesn't
-/// re-render every overlay at 120Hz — that was competing with the hover spring
-/// for main-thread budget. The minimumInterval pin is what guarantees
-/// ProMotion 120Hz refresh inside the .accessory background app context;
-/// without it the sweep settles to ~60Hz.
+/// fetching. Implemented as an NSViewRepresentable wrapping a CAGradientLayer
+/// (`.conic`) rotated by a CABasicAnimation. Core Animation runs the rotation
+/// on the compositor thread off the main thread — no SwiftUI body re-eval per
+/// frame, no per-frame CPU. Replaces a SwiftUI TimelineView that ticked at
+/// 120Hz and burned ~24% main-thread CPU continuously.
+///
+/// The blur is applied as a SwiftUI `.blur` *outside* the representable.
+/// CIFilter on a non-backing sublayer is undocumented/fragile on macOS, so
+/// keeping the blur in SwiftUI sidesteps the question — SwiftUI's `.blur`
+/// is GPU-cheap and known-correct.
 private struct LoadingSweep: View {
     let active: Bool
     /// Color of the orbiting trail. Cobalt by default; switches to amber
@@ -399,26 +404,116 @@ private struct LoadingSweep: View {
 
     var body: some View {
         if active {
-            TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { context in
-                let t = context.date.timeIntervalSinceReferenceDate
-                let rotation = (t * 100).truncatingRemainder(dividingBy: 360)
-                IslandShape()
-                    .stroke(
-                        AngularGradient(
-                            gradient: Gradient(stops: [
-                                .init(color: .clear, location: 0.00),
-                                .init(color: tint.opacity(0.0), location: 0.55),
-                                .init(color: tint, location: 0.78),
-                                .init(color: .white.opacity(0.95), location: 0.92),
-                                .init(color: tint.opacity(0.0), location: 1.00),
-                            ]),
-                            center: .center,
-                            angle: .degrees(rotation)
-                        ),
-                        lineWidth: 4
-                    )
-                    .blur(radius: 3)
-            }
+            SweepRepresentable(tint: tint)
+                .blur(radius: 3)
+                .allowsHitTesting(false)
         }
+    }
+}
+
+private struct SweepRepresentable: NSViewRepresentable {
+    let tint: Color
+
+    func makeNSView(context: Context) -> SweepNSView {
+        let v = SweepNSView()
+        v.applyTint(NSColor(tint))
+        return v
+    }
+
+    func updateNSView(_ view: SweepNSView, context: Context) {
+        view.applyTint(NSColor(tint))
+    }
+
+    static func dismantleNSView(_ view: SweepNSView, coordinator: ()) {
+        view.tearDown()
+    }
+}
+
+/// Layer-backed view that hosts the rotating conic gradient. The container
+/// (= the view's backing layer) is masked by the IslandShape stroke, so the
+/// rotating gradient is visible only along the silhouette outline.
+private final class SweepNSView: NSView {
+    private let gradientLayer = CAGradientLayer()
+    private let maskLayer = CAShapeLayer()
+    private var lastTint: NSColor?
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        setup()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        setup()
+    }
+
+    private func setup() {
+        wantsLayer = true
+        let root = CALayer()
+        layer = root
+
+        gradientLayer.type = .conic
+        gradientLayer.startPoint = CGPoint(x: 0.5, y: 0.5)
+        gradientLayer.endPoint = CGPoint(x: 1.0, y: 0.5)
+        gradientLayer.locations = [0.00, 0.55, 0.78, 0.92, 1.00] as [NSNumber]
+        gradientLayer.anchorPoint = CGPoint(x: 0.5, y: 0.5)
+
+        maskLayer.fillColor = nil
+        maskLayer.strokeColor = NSColor.black.cgColor
+        maskLayer.lineWidth = 4
+
+        root.addSublayer(gradientLayer)
+        // Mask is set on the *root* (not the gradient) so it doesn't rotate
+        // with the gradient — the silhouette stays fixed while the gradient
+        // pattern spins inside it.
+        root.mask = maskLayer
+
+        startRotation()
+    }
+
+    override func layout() {
+        super.layout()
+        // Frame changes (state morph compact ↔ peek ↔ expanded) fire here.
+        // disableActions stops the implicit fade between mask paths.
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layer?.frame = bounds
+        gradientLayer.frame = bounds
+        maskLayer.frame = bounds
+        maskLayer.path = IslandShape().path(in: bounds).cgPath
+        CATransaction.commit()
+    }
+
+    func applyTint(_ tint: NSColor) {
+        guard tint != lastTint else { return }
+        lastTint = tint
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        gradientLayer.colors = [
+            NSColor.clear.cgColor,
+            tint.withAlphaComponent(0.0).cgColor,
+            tint.cgColor,
+            NSColor(white: 1.0, alpha: 0.95).cgColor,
+            tint.withAlphaComponent(0.0).cgColor,
+        ]
+        CATransaction.commit()
+    }
+
+    func tearDown() {
+        gradientLayer.removeAnimation(forKey: "rotate")
+    }
+
+    private func startRotation() {
+        let anim = CABasicAnimation(keyPath: "transform.rotation.z")
+        anim.fromValue = 0
+        // Negative reads as clockwise on screen — CALayer geometry on
+        // macOS is Y-down, so positive `transform.rotation.z` rotates
+        // counter-clockwise visually. Matches the original SwiftUI sweep
+        // where rotation was `(t * 100) mod 360` increasing with time.
+        anim.toValue = -2 * Double.pi
+        anim.duration = 3.6
+        anim.repeatCount = .infinity
+        anim.isRemovedOnCompletion = false
+        gradientLayer.add(anim, forKey: "rotate")
     }
 }
