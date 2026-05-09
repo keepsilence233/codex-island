@@ -97,10 +97,19 @@ EOF
 # Ad-hoc sign Sparkle's embedded XPC services first (they're inside the
 # framework bundle), then the framework itself. The outer .app gets re-signed
 # in release.sh after everything's in place.
-codesign --force --sign - --timestamp=none --preserve-metadata=identifier,entitlements,flags \
-  "$FRAMEWORKS_DIR/Sparkle.framework/Versions/Current/XPCServices/Installer.xpc" \
-  "$FRAMEWORKS_DIR/Sparkle.framework/Versions/Current/XPCServices/Downloader.xpc" \
-  2>/dev/null || true
+#
+# Sparkle ships both Installer.xpc and Downloader.xpc, but their presence has
+# varied across Sparkle versions. Gate on path existence (so missing helpers
+# don't fail the build) and propagate any real codesign error — silencing
+# them lets "Updater failed to start" reach end users at Check Now time.
+XPC_DIR="$FRAMEWORKS_DIR/Sparkle.framework/Versions/Current/XPCServices"
+for xpc in Installer.xpc Downloader.xpc; do
+  XPC_PATH="$XPC_DIR/$xpc"
+  if [[ -d "$XPC_PATH" ]]; then
+    codesign --force --sign - --timestamp=none \
+      --preserve-metadata=identifier,entitlements,flags "$XPC_PATH"
+  fi
+done
 codesign --force --sign - --timestamp=none "$FRAMEWORKS_DIR/Sparkle.framework"
 
 echo "✓ built $APP_DIR ($VERSION)"
