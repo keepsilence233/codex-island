@@ -11,6 +11,7 @@ final class IslandWindowController {
     private var globalMouseMonitor: Any?
     private var trackingTimer: Timer?
     private var screenChangeObserver: NSObjectProtocol?
+    private var occlusionObserver: NSObjectProtocol?
     private var subs: Set<AnyCancellable> = []
     private var hasSeenMouseEvent = false
 
@@ -48,10 +49,14 @@ final class IslandWindowController {
         installMouseTracking()
         observeScreenChanges()
         observeTargetChoice()
+        observeOcclusion()
     }
 
     deinit {
         if let observer = screenChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        if let observer = occlusionObserver {
             NotificationCenter.default.removeObserver(observer)
         }
         if let m = globalMouseMonitor { NSEvent.removeMonitor(m) }
@@ -128,6 +133,29 @@ final class IslandWindowController {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor in self?.repositionForCurrentScreen() }
+        }
+    }
+
+    /// Pauses the LoadingSweep when the user can't see the island —
+    /// fullscreen apps on a separate Space, the screen going to sleep,
+    /// or anything else macOS reports as making the window invisible.
+    /// The 30Hz TimelineView is the dominant idle-CPU cost; pausing it
+    /// while occluded drops idle to ~0%.
+    private func observeOcclusion() {
+        // Seed the initial state — the notification doesn't fire on launch.
+        WindowOcclusionStore.shared.update(
+            isVisible: window.occlusionState.contains(.visible)
+        )
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            let visible = self.window.occlusionState.contains(.visible)
+            Task { @MainActor in
+                WindowOcclusionStore.shared.update(isVisible: visible)
+            }
         }
     }
 

@@ -8,6 +8,7 @@ struct IslandRootView: View {
     @ObservedObject private var costStore = CostStore.shared
     @ObservedObject private var lowPower = LowPowerModeStore.shared
     @ObservedObject private var alerts = AlertEngine.shared
+    @ObservedObject private var occlusion = WindowOcclusionStore.shared
     @State private var hovering = false
     @State private var contentVisible = false
     @State private var pillsVisible = false
@@ -37,7 +38,12 @@ struct IslandRootView: View {
                 // the entire glow (halo + sweep) reads as one consistent
                 // color when above threshold.
                 LoadingSweep(
-                    active: lowPower.enabled ? glowEventActive : true,
+                    // Pause entirely when the window is occluded by a
+                    // fullscreen app or display sleep — the user can't
+                    // see it anyway, so re-shading the gradient at 30Hz
+                    // is pure waste.
+                    active: !occlusion.isOccluded
+                        && (lowPower.enabled ? glowEventActive : true),
                     tint: glowColor
                 )
 
@@ -385,20 +391,22 @@ struct IslandRootView: View {
 }
 
 /// Cobalt angular-gradient sweep that orbits the silhouette while data is
-/// fetching. Renders the AngularGradient once at angle 0, then rotates the
-/// whole layer via `.rotationEffect` driven by `withAnimation(.linear.
-/// repeatForever)`. SwiftUI translates that into a CABasicAnimation on the
-/// layer's transform — rotation happens on the WindowServer compositor
-/// thread, off the main thread. The conic gradient texture is shaded ONCE
-/// when the view appears, not on every frame.
+/// fetching. Owns its own TimelineView so the parent (IslandRootView) doesn't
+/// re-render every overlay alongside the sweep — that was competing with the
+/// hover spring for main-thread budget.
 ///
-/// Why this matters: profiling the previous TimelineView-driven implementation
-/// showed `rgba64_shade_conic_RGB → atan2f` dominating main-thread CPU.
-/// CoreGraphics re-shaded every pixel of the gradient per frame because the
-/// AngularGradient's `angle` parameter changed each tick. By moving rotation
-/// out of the gradient (fixed angle) and into a layer transform, we keep
-/// the same SwiftUI rendering quality while the per-frame work collapses
-/// to a transform multiplication.
+/// Tick rate is 30Hz (was 120Hz). 3.6s/revolution at 30Hz = 12° per frame,
+/// indistinguishable from 120Hz to the eye for a slow continuous orbit but
+/// 4× cheaper on the main thread. The bigger CPU saving comes from gating
+/// `active` on `!isWindowOccluded` upstream — when a fullscreen app or
+/// another window covers the menu bar entirely, the sweep stops rendering
+/// (the user can't see it anyway), dropping idle CPU to ~0%.
+///
+/// Earlier attempts to push rotation into Core Animation (CAGradientLayer or
+/// `.rotationEffect` over a static gradient) all subtly changed the glow
+/// feel — SwiftUI's per-frame conic re-shading produces an alive,
+/// atmospheric look that a rotated static texture loses. This is the
+/// minimum-cost approach that preserves the exact original render.
 private struct LoadingSweep: View {
     let active: Bool
     /// Color of the orbiting trail. Cobalt by default; switches to amber
@@ -408,48 +416,25 @@ private struct LoadingSweep: View {
 
     var body: some View {
         if active {
-            RotatingSweep(tint: tint)
-        }
-    }
-}
-
-private struct RotatingSweep: View {
-    let tint: Color
-    @State private var rotation: Double = 0
-
-    var body: some View {
-        // Wrap the rotating gradient in a stable ZStack so the outer
-        // `.mask` stays in the parent's (un-rotated) coordinate space.
-        // Without this wrapper, applying `.rotationEffect` then `.mask`
-        // rotates the entire masked result — the silhouette outline
-        // itself spins, which reads as a diagonal beam instead of a
-        // bright spot orbiting a static silhouette.
-        ZStack {
-            AngularGradient(
-                gradient: Gradient(stops: [
-                    .init(color: .clear, location: 0.00),
-                    .init(color: tint.opacity(0.0), location: 0.55),
-                    .init(color: tint, location: 0.78),
-                    .init(color: .white.opacity(0.95), location: 0.92),
-                    .init(color: tint.opacity(0.0), location: 1.00),
-                ]),
-                center: .center,
-                angle: .degrees(0)
-            )
-            .rotationEffect(.degrees(rotation))
-        }
-        .mask(
-            IslandShape()
-                .stroke(Color.white, lineWidth: 4)
-        )
-        .blur(radius: 3)
-        .onAppear {
-            // Reset to 0 in case onAppear fires after a previous mount.
-            rotation = 0
-            withAnimation(.linear(duration: 3.6).repeatForever(autoreverses: false)) {
-                // Setting once with .repeatForever lets SwiftUI translate
-                // this into a CABasicAnimation on `transform.rotation.z`.
-                rotation = 360
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0)) { context in
+                let t = context.date.timeIntervalSinceReferenceDate
+                let rotation = (t * 100).truncatingRemainder(dividingBy: 360)
+                IslandShape()
+                    .stroke(
+                        AngularGradient(
+                            gradient: Gradient(stops: [
+                                .init(color: .clear, location: 0.00),
+                                .init(color: tint.opacity(0.0), location: 0.55),
+                                .init(color: tint, location: 0.78),
+                                .init(color: .white.opacity(0.95), location: 0.92),
+                                .init(color: tint.opacity(0.0), location: 1.00),
+                            ]),
+                            center: .center,
+                            angle: .degrees(rotation)
+                        ),
+                        lineWidth: 4
+                    )
+                    .blur(radius: 3)
             }
         }
     }
