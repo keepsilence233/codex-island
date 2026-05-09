@@ -13,6 +13,10 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 VERSION="$(cat VERSION)"
+if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo "error: VERSION must be X.Y.Z (got '$VERSION')" >&2
+  exit 1
+fi
 APP_NAME="CodexIsland"
 DIST="dist"
 APP="$DIST/$APP_NAME.app"
