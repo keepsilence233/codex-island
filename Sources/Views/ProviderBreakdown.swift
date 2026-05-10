@@ -239,7 +239,7 @@ struct PerModelBreakdown: View {
                 Capsule()
                     .fill(color.opacity(topWeight * dimFillMultiplier))
                     .frame(width: 8, height: 4)
-                Text("wk")
+                Text("week")
                     .font(Typography.caption)
                     .foregroundStyle(.white.opacity(0.50))
             }
