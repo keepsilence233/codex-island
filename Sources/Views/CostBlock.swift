@@ -57,13 +57,14 @@ struct CostTile: View {
     var body: some View {
         VStack(alignment: centered ? .center : .leading, spacing: 6) {
             HStack(alignment: .firstTextBaseline) {
-                Text(window.label)
+                Text(L10n.tr(window.label))
                     .font(Typography.label)
                     .foregroundStyle(.white.opacity(0.55))
                 Spacer()
                 Text(resetGlyph)
                     .font(Typography.caption)
                     .foregroundStyle(.white.opacity(window.unknownModels.isEmpty ? 0.4 : 0.5))
+                    .help(resetGlyphSpoken)
                     .accessibilityLabel(resetGlyphSpoken)
             }
             .frame(maxWidth: centered ? 240 : .infinity)
@@ -99,11 +100,11 @@ struct CostTile: View {
         case .multi:
             let plan = formatBarDollars(planAmount)
             let you = formatBarDollars(window.dollars)
-            return "\(planLabel ?? "Plan") \(plan) versus you \(you)"
+            return L10n.tr("%@ %@ versus you %@", planLabel ?? L10n.tr("Plan"), plan, you)
         case .tokens:
-            return "\(tokensValue)\(tokensUnit) tokens"
+            return L10n.tr("%@%@ tokens", tokensValue, tokensUnit)
         case .spark:
-            return "$\(formattedDollarsCompact) cumulative"
+            return L10n.tr("$%@ cumulative", formattedDollarsCompact)
         }
     }
 
@@ -146,7 +147,7 @@ struct CostTile: View {
             Spacer(minLength: 0)
             barColumn(
                 amount: plan,
-                label: planLabel ?? "Plan",
+                label: planLabel ?? L10n.tr("Plan"),
                 fill: .white.opacity(0.20),
                 isYou: false,
                 maxAmount: maxAmount,
@@ -154,7 +155,7 @@ struct CostTile: View {
             )
             barColumn(
                 amount: spend,
-                label: "You",
+                label: L10n.tr("You"),
                 fill: color,
                 isYou: true,
                 maxAmount: maxAmount,
@@ -351,7 +352,7 @@ struct CostTile: View {
     private var resetGlyph: String {
         if let err = window.error { return err }
         if !window.unknownModels.isEmpty {
-            return "⚠ \(window.unknownModels.count) unpriced"
+            return L10n.tr("⚠ %d unpriced", window.unknownModels.count)
         }
         return "↻ " + (isMonth ? CostBucketing.monthResetIn() : CostBucketing.todayResetIn())
     }
@@ -359,9 +360,9 @@ struct CostTile: View {
     private var resetGlyphSpoken: String {
         if let err = window.error { return err }
         if !window.unknownModels.isEmpty {
-            return "Warning: \(window.unknownModels.count) unpriced models — totals may be incomplete."
+            return L10n.tr("Warning: %d unpriced models — totals may be incomplete.", window.unknownModels.count)
         }
         let countdown = isMonth ? CostBucketing.monthResetIn() : CostBucketing.todayResetIn()
-        return "Resets in \(countdown)"
+        return L10n.tr("Resets in %@", countdown)
     }
 }
