@@ -51,7 +51,6 @@ final class IslandSpacingStore: ObservableObject {
     var width: CGFloat { mode.width }
 
     private init() {
-        let raw = UserDefaults.standard.string(forKey: Self.key)
-        self.mode = Mode(rawValue: raw ?? "") ?? .compact
+        self.mode = Pref.enumValue(key: Self.key, default: .compact)
     }
 }

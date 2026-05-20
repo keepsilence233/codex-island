@@ -15,7 +15,6 @@ final class RefreshIntervalStore: ObservableObject {
     }
 
     private init() {
-        let stored = UserDefaults.standard.integer(forKey: Self.key)
-        self.seconds = Self.allowed.contains(stored) ? stored : 300
+        self.seconds = Pref.int(key: Self.key, default: 300, allowed: Self.allowed)
     }
 }

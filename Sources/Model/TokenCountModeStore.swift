@@ -30,7 +30,6 @@ final class TokenCountModeStore: ObservableObject {
     }
 
     private init() {
-        let raw = UserDefaults.standard.string(forKey: Self.key) ?? ""
-        self.mode = TokenCountMode(rawValue: raw) ?? .all
+        self.mode = Pref.enumValue(key: Self.key, default: .all)
     }
 }

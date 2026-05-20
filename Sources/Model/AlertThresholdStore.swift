@@ -38,23 +38,8 @@ final class AlertThresholdStore: ObservableObject {
     }
 
     private init() {
-        let defaults = UserDefaults.standard
-        // First-run seeding via .object(forKey:) == nil — UserDefaults.bool/
-        // .integer return zero-values for missing keys, which would clobber
-        // intended defaults if used directly.
-        if defaults.object(forKey: Self.enabledKey) == nil {
-            defaults.set(false, forKey: Self.enabledKey)
-        }
-        if defaults.object(forKey: Self.warningKey) == nil {
-            defaults.set(80, forKey: Self.warningKey)
-        }
-        if defaults.object(forKey: Self.criticalKey) == nil {
-            defaults.set(95, forKey: Self.criticalKey)
-        }
-        self.enabled = defaults.bool(forKey: Self.enabledKey)
-        let warning = defaults.integer(forKey: Self.warningKey)
-        let critical = defaults.integer(forKey: Self.criticalKey)
-        self.warningPercent = Self.warningRange.contains(warning) ? warning : 80
-        self.criticalPercent = Self.criticalRange.contains(critical) ? critical : 95
+        self.enabled = Pref.seededBool(key: Self.enabledKey, default: false)
+        self.warningPercent = Pref.int(key: Self.warningKey, default: 80, range: Self.warningRange)
+        self.criticalPercent = Pref.int(key: Self.criticalKey, default: 95, range: Self.criticalRange)
     }
 }

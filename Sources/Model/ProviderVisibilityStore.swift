@@ -19,17 +19,8 @@ final class ProviderVisibilityStore: ObservableObject {
     }
 
     private init() {
-        // Default true on first run. UserDefaults.bool returns false for
-        // missing keys, so we explicitly seed defaults the first time.
-        let defaults = UserDefaults.standard
-        if defaults.object(forKey: Self.claudeKey) == nil {
-            defaults.set(true, forKey: Self.claudeKey)
-        }
-        if defaults.object(forKey: Self.codexKey) == nil {
-            defaults.set(true, forKey: Self.codexKey)
-        }
-        self.claudeVisible = defaults.bool(forKey: Self.claudeKey)
-        self.codexVisible = defaults.bool(forKey: Self.codexKey)
+        self.claudeVisible = Pref.seededBool(key: Self.claudeKey, default: true)
+        self.codexVisible = Pref.seededBool(key: Self.codexKey, default: true)
     }
 
     /// Single accessor for call sites that have an `AlertEngine.Provider`
