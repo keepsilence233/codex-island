@@ -460,7 +460,7 @@ struct SettingsView: View {
         }
         .labelsHidden()
         .pickerStyle(.menu)
-        .frame(maxWidth: 220)
+        .fixedSize()
         .accessibilityLabel(L10n.tr("Language"))
     }
 
