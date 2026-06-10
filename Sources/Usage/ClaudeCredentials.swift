@@ -12,12 +12,20 @@ import Foundation
 ///   - A keychain-token (or refreshed-token) scope-insufficient short-circuits
 ///     to re-auth, because refresh re-issues the same scope set and cannot
 ///     recover a missing `user:profile`.
+///   - A rate-limited probe short-circuits from ANY source: the limiter is
+///     keyed per account, not per token (anthropics/claude-code#30930), so
+///     trying another token or refreshing only feeds the limiter.
 enum ClaudeCredentials {
     /// Emitted as `WindowUsage.error` when the keychain token is structurally
     /// valid but missing a scope the Claude usage endpoint now requires
     /// (`user:profile`, added mid-2026). The UI layer matches on this exact
     /// string to swap the error caption for an in-app re-auth button.
     static let reauthRequiredMessage = "re-login: claude /login"
+
+    /// Emitted as `WindowUsage.error` when the usage endpoint rate-limits us
+    /// (HTTP 429, or 200 with a rate_limit_error body). `UsageStore` matches
+    /// on this exact string to arm the post-429 fetch cooldown.
+    static let rateLimitedMessage = "rate limited"
 
     /// Outcome of a single usage-endpoint probe against one token. The fetcher
     /// owns the HTTP + parsing and reports back through this; `ClaudeCredentials`
@@ -75,7 +83,9 @@ enum ClaudeCredentials {
            !envToken.isEmpty {
             switch await probe(envToken, plan) {
             case .success(let u):       return .usage(u)
-            case .rateLimited:          lastError = "rate limited"
+            // Account-level limit: the keychain token shares the bucket, so a
+            // second probe is just another hit on a tripped limiter.
+            case .rateLimited:          return .failed(rateLimitedMessage)
             case .unauthorized:         break
             case .scopeInsufficient:    lastError = reauthRequiredMessage
             case .otherError(let e):    lastError = e
@@ -85,7 +95,11 @@ enum ClaudeCredentials {
         if let creds = cachedCreds {
             switch await probe(creds.accessToken, plan) {
             case .success(let u):       return .usage(u)
-            case .rateLimited:          lastError = "rate limited"
+            // The token is valid — the account is throttled. Refreshing
+            // rotates the token family for nothing and the re-probe doubles
+            // pressure on a limiter that is sticky once tripped
+            // (429 + retry-after: 0 until the account goes quiet).
+            case .rateLimited:          return .failed(rateLimitedMessage)
             case .unauthorized:         break
             // Refresh hands back tokens with the same scope set, so it cannot
             // recover from a missing-scope 403. Bail out and surface the only
@@ -109,7 +123,7 @@ enum ClaudeCredentials {
 
                 switch await probe(refreshed.accessToken, plan) {
                 case .success(let u):       return .usage(u)
-                case .rateLimited:          lastError = "rate limited"
+                case .rateLimited:          return .failed(rateLimitedMessage)
                 case .unauthorized:         break
                 case .scopeInsufficient:    return .reauthRequired(reauthRequiredMessage)
                 case .otherError(let e):    lastError = e

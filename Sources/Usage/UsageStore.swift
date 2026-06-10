@@ -32,6 +32,14 @@ final class UsageStore: ObservableObject {
         TimeInterval(RefreshIntervalStore.shared.seconds)
     }
 
+    /// The /api/oauth/usage limiter is sticky once tripped: it returns 429
+    /// with `retry-after: 0` until the account has gone quiet for a while
+    /// (anthropics/claude-code#30930), so polling through it never recovers.
+    /// After a rate-limited fetch, skip Claude fetches for this long.
+    /// Deliberately in-memory only — a quit+relaunch retries immediately.
+    private static let rateLimitCooldown: TimeInterval = 900
+    private var claudeCooldownUntil: Date?
+
     func refresh() {
         if loading { return }
         // Demo mode for screen recordings: skip the network entirely and
@@ -75,9 +83,12 @@ final class UsageStore: ObservableObject {
         refreshTask?.cancel()
         refreshTask = Task {
             async let codexResult = UsageFetcher.fetchCodex()
-            async let claudeResult = UsageFetcher.fetchClaude()
+            let coolingDown = claudeCooldownUntil.map { Date() < $0 } ?? false
+            var cl: AppUsage?
+            if !coolingDown {
+                cl = await UsageFetcher.fetchClaude()
+            }
             let c = await codexResult
-            let cl = await claudeResult
 
             // Cancellation = network monitor saw the path come up while we
             // were mid-flight on a dead one. The fetched values are the
@@ -98,8 +109,16 @@ final class UsageStore: ObservableObject {
             if !UsageStore.isErrorOnly(c) || UsageStore.isErrorOnly(self.codex) {
                 self.codex = c
             }
-            if !UsageStore.isErrorOnly(cl) || UsageStore.isErrorOnly(self.claude) {
-                self.claude = cl
+            if let cl {
+                if UsageStore.isRateLimited(cl) {
+                    self.claudeCooldownUntil = Date().addingTimeInterval(UsageStore.rateLimitCooldown)
+                    NSLog("CodexIsland: Claude usage rate-limited; skipping Claude fetches for %.0fs", UsageStore.rateLimitCooldown)
+                } else {
+                    self.claudeCooldownUntil = nil
+                }
+                if !UsageStore.isErrorOnly(cl) || UsageStore.isErrorOnly(self.claude) {
+                    self.claude = cl
+                }
             }
             self.lastUpdated = Date()
             self.loading = false
@@ -111,6 +130,13 @@ final class UsageStore: ObservableObject {
     private static func isErrorOnly(_ u: AppUsage) -> Bool {
         u.fiveHour.error != nil && u.weekly.error != nil
             && u.fiveHour.usedPercent == 0 && u.weekly.usedPercent == 0
+    }
+
+    /// True when the fetch resolved to the rate-limited error (both windows
+    /// carry the same message — see `UsageFetcher.errorPair`).
+    private static func isRateLimited(_ u: AppUsage) -> Bool {
+        u.fiveHour.error == ClaudeCredentials.rateLimitedMessage
+            && u.weekly.error == ClaudeCredentials.rateLimitedMessage
     }
 
     /// Replace current usage values with hand-tuned percentages so the
