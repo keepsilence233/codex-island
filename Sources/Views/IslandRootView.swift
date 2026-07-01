@@ -198,7 +198,7 @@ struct IslandRootView: View {
                         DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
                             guard !hovering else { return }
                             // Re-read restState here — the user may have flipped
-                            // the always-show toggle during the 100ms wait, and
+                            // the always-show toggle during the 20ms wait, and
                             // a captured-at-creation-time `target` would settle
                             // at the wrong state for them.
                             let target = restState
