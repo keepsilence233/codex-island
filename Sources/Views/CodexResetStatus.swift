@@ -109,7 +109,7 @@ struct CodexResetStatus: View {
                 .frame(width: 18, height: 18)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text("EXPIRES")
+                Text(L10n.tr("EXPIRES"))
                     .font(.system(size: 9, weight: .semibold))
                     .tracking(0.9)
                     .foregroundStyle(.white.opacity(0.52))
