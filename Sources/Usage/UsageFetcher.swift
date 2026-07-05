@@ -115,8 +115,8 @@ enum UsageFetcher {
     /// itself talks to api.anthropic.com/api/oauth/usage with a beta header
     /// and a User-Agent that identifies as the CLI. We replicate that.
     ///
-    /// Token acquisition (env → keychain → refresh → rotation writeback) lives
-    /// behind `ClaudeCredentials`. We hand it the usage probe and render its
+    /// Token acquisition (env → keychain, strictly read-only) lives behind
+    /// `ClaudeCredentials`. We hand it the usage probe and render its
     /// resolution: a parsed `AppUsage`, or an error caption (re-auth or last
     /// error) via `errorPair`.
     static func fetchClaude() async -> AppUsage {

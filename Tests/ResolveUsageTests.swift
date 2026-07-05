@@ -10,12 +10,7 @@ import Foundation
 /// /api/oauth/usage limiter is account-keyed and sticky once tripped
 /// (anthropics/claude-code#30930). resolveUsage must short-circuit on the
 /// first rate-limited probe — if a regression reintroduces the old
-/// fall-through, every poll cycle re-probes and rotates the refresh-token
-/// family against a throttled account. (On a dev machine with real keychain
-/// creds, such a regression would also make THIS test perform one live token
-/// rotation before the probe-count assertion catches it — noisy but
-/// recoverable, since the rotation writeback path is exercised by the app
-/// daily.)
+/// fall-through, every poll cycle re-probes against a throttled account.
 @main
 struct ResolveUsageTests {
     final class ProbeCounter {
@@ -40,9 +35,8 @@ struct ResolveUsageTests {
         }
 
         // T1 — a rate-limited probe short-circuits the whole resolution:
-        // exactly one probe (no fallback to the next token source, no
-        // refresh + re-probe) and the exact error string the UI and
-        // UsageStore cooldown match on.
+        // exactly one probe (no fallback to the next token source) and the
+        // exact error string the UI and UsageStore cooldown match on.
         let t1 = ProbeCounter()
         let r1 = await ClaudeCredentials.resolveUsage { _, _ in
             t1.calls += 1
@@ -87,20 +81,9 @@ struct ResolveUsageTests {
         let picked = ClaudeCredentials.selectClaudeCreds(from: candidates)
         expect(picked?.account == "ericpark", "T3 selects the claudeAiOauth item, not the mcpOAuth/empty ones")
         expect(picked?.subscriptionType == "max", "T3 carries subscriptionType from the picked item")
-        expect(picked?.outer["mcpOAuth"] != nil, "T3 keeps sibling top-level keys in outer")
         expect(ClaudeCredentials.selectClaudeCreds(from: [
             ClaudeCredentials.KeychainCandidate(account: "unknown", blob: ["mcpOAuth": [:]]),
         ]) == nil, "T3 returns nil when no item carries claudeAiOauth")
-
-        // T4 — rotation writeback preserves every sibling key. Writing only
-        // {"claudeAiOauth": …} back to an item that also held mcpOAuth would
-        // clobber Claude Code's MCP auth.
-        let rotated = ClaudeCredentials.rotatedPayload(
-            outer: ["mcpOAuth": ["server": "x"], "claudeAiOauth": ["accessToken": "old"]],
-            oauth: ["accessToken": "new", "refreshToken": "rt2"]
-        )
-        expect(rotated["mcpOAuth"] != nil, "T4 rotation payload keeps mcpOAuth")
-        expect((rotated["claudeAiOauth"] as? [String: Any])?["accessToken"] as? String == "new", "T4 rotation payload updates claudeAiOauth")
 
         // The store and views match these exact strings; a reword is a
         // breaking change for them, not a copy edit.
