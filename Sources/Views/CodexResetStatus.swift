@@ -125,7 +125,7 @@ struct CodexResetStatus: View {
     /// app, but faster than `.strongEaseOut` (280ms) — a small hover
     /// reveal should settle in under 200ms. Exit is faster than enter.
     private static let popoverIn = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.18)
-    private static let popoverOut = Animation.easeOut(duration: 0.13)
+    private static let popoverOut = Animation.easeOut(duration: 0.09)
 
     private func presentPopover() {
         cancelHide()
@@ -144,7 +144,9 @@ struct CodexResetStatus: View {
             }
         }
         hideWorkItem = workItem
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12, execute: workItem)
+        // Just enough grace to cross the badge → popover gap; any longer
+        // and the card lingers after hover-out.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.08, execute: workItem)
     }
 
     private func cancelHide() {
