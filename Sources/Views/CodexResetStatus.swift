@@ -12,10 +12,13 @@ struct CodexResetStatus: View {
     var body: some View {
         if shouldShowBadge {
             badge
-                .overlay(alignment: .topTrailing) {
+                .overlay(alignment: .bottomTrailing) {
                     if showPopover {
                         popover
-                            .offset(x: 42, y: popoverYOffset)
+                            // Anchored to the badge bottom, lifted clear of
+                            // the badge so the card grows upward inside the
+                            // panel regardless of row count.
+                            .offset(y: -30)
                             .transition(.opacity.combined(with: .scale(scale: 0.97, anchor: .bottomTrailing)))
                     }
                 }
@@ -31,15 +34,19 @@ struct CodexResetStatus: View {
     private var badge: some View {
         HStack(spacing: 6) {
             Image(systemName: "arrow.counterclockwise")
-                .font(Typography.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(badgeHovered || showPopover ? 0.84 : 0.72))
+                .font(Typography.caption)
+                .foregroundStyle(IslandColor.codex.opacity(badgeHovered || showPopover ? 1 : 0.8))
             Text(resetAvailabilityText)
-                .font(Typography.caption.weight(.semibold))
-                .foregroundStyle(.white.opacity(badgeHovered || showPopover ? 0.96 : 0.86))
+                .font(Typography.caption)
+                .foregroundStyle(.white.opacity(badgeHovered || showPopover ? 0.85 : 0.55))
         }
-        .padding(.horizontal, 2)
-        .padding(.vertical, 2)
-        .contentShape(RoundedRectangle(cornerRadius: 8))
+        .padding(.horizontal, 6)
+        .padding(.vertical, 3)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(.white.opacity(badgeHovered || showPopover ? 0.05 : 0))
+        )
+        .contentShape(RoundedRectangle(cornerRadius: 5))
         .onHover { hovered in
             badgeHovered = hovered
             hovered ? presentPopover() : scheduleHide()
@@ -48,7 +55,7 @@ struct CodexResetStatus: View {
         .accessibilityLabel(resetAvailabilityAccessibilityLabel)
         .accessibilityHint(L10n.tr("Hover to show reset expiration details"))
         .animation(.easeOut(duration: 0.12), value: badgeHovered)
-        .animation(.strongEaseOut, value: showPopover)
+        .animation(.easeOut(duration: 0.12), value: showPopover)
     }
 
     private var resetAvailabilityText: String {
@@ -61,40 +68,27 @@ struct CodexResetStatus: View {
         return count == 1 ? L10n.tr("1 Codex reset available") : L10n.tr("%d Codex resets available", count)
     }
 
-    private var popoverYOffset: CGFloat {
-        let extraRows = max(0, min(2, usageStore.codexResetCredits.availableCredits.count - 1))
-        return -56 - CGFloat(extraRows * 50)
-    }
-
     private var popover: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             ForEach(Array(usageStore.codexResetCredits.availableCredits.prefix(3)), id: \.id) { credit in
                 resetRow(credit)
             }
         }
-        .padding(5)
-        .frame(width: 330, alignment: .leading)
-        .background(alignment: .top) {
-            ZStack(alignment: .topTrailing) {
-                RoundedRectangle(cornerRadius: 20)
-                    .fill(Color(red: 0.17, green: 0.20, blue: 0.28).opacity(0.92))
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(
-                        LinearGradient(
-                            colors: [
-                                Color.white.opacity(0.08),
-                                Color.white.opacity(0.03)
-                            ],
-                            startPoint: .top,
-                            endPoint: .bottom
-                        )
-                    )
-                RoundedRectangle(cornerRadius: 20)
-                    .strokeBorder(.white.opacity(0.10), lineWidth: 0.75)
-            }
-        }
-        .shadow(color: .black.opacity(0.42), radius: 28, y: 14)
-        .shadow(color: Color.white.opacity(0.03), radius: 4)
+        .padding(6)
+        .frame(width: 210, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10)
+                .fill(.black)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .fill(.white.opacity(0.04))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10)
+                        .strokeBorder(.white.opacity(0.10), lineWidth: 0.5)
+                )
+        )
+        .shadow(color: .black.opacity(0.5), radius: 16, y: 8)
         .onHover { hovered in
             popoverHovered = hovered
             hovered ? cancelHide() : scheduleHide()
@@ -102,71 +96,40 @@ struct CodexResetStatus: View {
     }
 
     private func resetRow(_ credit: CodexResetCredit) -> some View {
-        HStack(alignment: .center, spacing: 7) {
-            Image(systemName: "checkmark.seal")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color(red: 0.43, green: 0.95, blue: 0.74))
-                .frame(width: 18, height: 18)
+        HStack(alignment: .center, spacing: 8) {
+            Image(systemName: "arrow.counterclockwise")
+                .font(Typography.caption)
+                .foregroundStyle(IslandColor.codex.opacity(0.9))
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(L10n.tr("EXPIRES"))
-                    .font(.system(size: 9, weight: .semibold))
-                    .tracking(0.9)
-                    .foregroundStyle(.white.opacity(0.52))
-                Text(absolute(credit.expiresAt))
-                    .font(.system(size: 13, weight: .semibold, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.95))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.5)
-                    .layoutPriority(1)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Spacer(minLength: 10)
+            Text(L10n.tr("EXPIRES"))
+                .font(Typography.sectionLabel)
+                .tracking(0.8)
+                .foregroundStyle(.white.opacity(0.40))
+            Spacer(minLength: 8)
 
-            Text(L10n.tr("Available"))
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color(red: 0.52, green: 0.95, blue: 0.71))
-                .frame(width: 68, height: 26)
-                .padding(.horizontal, 2)
-                .padding(.vertical, 1)
-                .background(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .fill(Color(red: 0.29, green: 0.55, blue: 0.42).opacity(0.26))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .strokeBorder(Color(red: 0.37, green: 0.83, blue: 0.60).opacity(0.28), lineWidth: 0.75)
-                        )
-                )
+            Text(absolute(credit.expiresAt))
+                .font(Typography.bodyNumber)
+                .foregroundStyle(.white.opacity(0.95))
+                .lineLimit(1)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 8)
-        .padding(.vertical, 7)
+        .padding(.vertical, 6)
         .background(
-            RoundedRectangle(cornerRadius: 14)
-                .fill(Color.white.opacity(0.055))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .fill(
-                            LinearGradient(
-                                colors: [
-                                    Color.white.opacity(0.04),
-                                    Color.clear
-                                ],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 14)
-                        .strokeBorder(Color(red: 0.25, green: 0.62, blue: 0.42).opacity(0.18), lineWidth: 0.75)
-                )
+            RoundedRectangle(cornerRadius: 6)
+                .fill(.white.opacity(0.05))
         )
     }
 
+    /// Popover-tier timing: same strong ease-out curve as the rest of the
+    /// app, but faster than `.strongEaseOut` (280ms) — a small hover
+    /// reveal should settle in under 200ms. Exit is faster than enter.
+    private static let popoverIn = Animation.timingCurve(0.23, 1, 0.32, 1, duration: 0.18)
+    private static let popoverOut = Animation.easeOut(duration: 0.13)
+
     private func presentPopover() {
         cancelHide()
-        withAnimation(.strongEaseOut) {
+        withAnimation(Self.popoverIn) {
             showPopover = true
         }
     }
@@ -175,7 +138,7 @@ struct CodexResetStatus: View {
         cancelHide()
         let workItem = DispatchWorkItem {
             if !badgeHovered && !popoverHovered {
-                withAnimation(.easeOut(duration: 0.14)) {
+                withAnimation(Self.popoverOut) {
                     showPopover = false
                 }
             }
@@ -192,7 +155,7 @@ struct CodexResetStatus: View {
     private static let absoluteFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.locale = L10n.locale
-        formatter.setLocalizedDateFormatFromTemplate("yMMMdahmm")
+        formatter.setLocalizedDateFormatFromTemplate("yMMMd")
         return formatter
     }()
 
