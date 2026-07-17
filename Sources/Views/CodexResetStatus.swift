@@ -55,8 +55,8 @@ struct CodexResetStatus: View {
         .accessibilityElement(children: .combine)
         .accessibilityLabel(resetAvailabilityAccessibilityLabel)
         .accessibilityHint(L10n.tr("Hover to show reset expiration details"))
-        .animation(.easeOut(duration: 0.12), value: badgeHovered)
-        .animation(.easeOut(duration: 0.12), value: showPopover)
+        .animation(.hoverFade, value: badgeHovered)
+        .animation(.hoverFade, value: showPopover)
     }
 
     private var resetAvailabilityText: String {

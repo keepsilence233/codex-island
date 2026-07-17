@@ -97,7 +97,11 @@ struct ChartsBlock: View {
                 // replace them with a single centered prompt. Swapping (not
                 // appending a button row) keeps the panel within its fixed
                 // 188pt height instead of overflowing into the footer.
+                // Same swap vocabulary as a chart-style change — the tiles
+                // and the prompt trade places in one 220ms morph instead of
+                // teleporting when a poll flips the auth state.
                 ReauthState(color: color, usage: usage)
+                    .transition(.chartSwap.animation(.chartSwap))
             } else {
                 HStack(spacing: 18) {
                     ChartTile(style: style, color: color, labelKey: "5h",
@@ -107,6 +111,7 @@ struct ChartsBlock: View {
                               window: usage.weekly, seed: seed + 1,
                               provider: provider, windowKind: .weekly)
                 }
+                .transition(.chartSwap.animation(.chartSwap))
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
@@ -169,9 +174,11 @@ struct ReauthButton: View {
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableButtonStyle(scale: 0.97))
         .disabled(store.claudeReauthInProgress)
         .onHover { hovered = $0 }
+        .animation(.hoverFade, value: hovered)
+        .animation(.hoverFade, value: store.claudeReauthInProgress)
     }
 }
 

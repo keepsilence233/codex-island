@@ -161,7 +161,7 @@ struct PanelFooter: View {
             )
             .contentShape(RoundedRectangle(cornerRadius: 5))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(PressableButtonStyle(scale: 0.97))
         .disabled(activeLoading)
         .onHover { h in
             liveStatusHovered = h
@@ -172,8 +172,8 @@ struct PanelFooter: View {
             }
         }
         .help(L10n.tr("Refresh now"))
-        .animation(.easeOut(duration: 0.12), value: liveStatusHovered)
-        .animation(.easeOut(duration: 0.12), value: activeLoading)
+        .animation(.hoverFade, value: liveStatusHovered)
+        .animation(.hoverFade, value: activeLoading)
         .accessibilityElement(children: .combine)
         .accessibilityLabel(liveStatusSpoken)
         .accessibilityHint(L10n.tr("Click to refresh now"))
