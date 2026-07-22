@@ -232,11 +232,17 @@ final class UsageStore: ObservableObject {
             // ~2 minutes total — generous enough that even a slow OAuth
             // round-trip (browser cold start, SSO redirect, 2FA prompt)
             // resolves in time, short enough to not strand the UI.
+            let baseline = ClaudeCredentials.credentialStoreFingerprint()
             for _ in 0..<24 {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 if Task.isCancelled { return }
-                // The whole point of this loop is to catch the keychain item
-                // `claude auth login` just rewrote — never serve the cache.
+                // Wait for `claude auth login` to actually write the new
+                // credentials before paying the secret read: the fingerprint
+                // is metadata-only (never prompts), while clearing the cache
+                // and fetching does a full keychain read — doing that on
+                // every 5s tick was up to 24 ACL prompts per re-auth on
+                // machines without a durable "Always Allow" grant.
+                guard ClaudeCredentials.credentialStoreFingerprint() != baseline else { continue }
                 ClaudeCredentials.clearCache()
                 let cl = await UsageFetcher.fetchClaude()
                 if Task.isCancelled { return }

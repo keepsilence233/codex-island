@@ -127,14 +127,31 @@ enum ClaudeCredentials {
             // doubles pressure on a limiter that is sticky once tripped
             // (429 + retry-after: 0 until the account goes quiet).
             case .rateLimited:          return .failed(rateLimitedMessage)
-            // Expired access token. Claude Code will refresh it on its next
-            // run; we stay read-only and show the stale state until then.
-            // Drop the cached creds so the next poll re-reads the keychain —
-            // otherwise a token Claude Code already rotated stays stale in
-            // the cache forever and the chip never recovers.
+            // Expired access token — but Claude Code rotates the store's
+            // token roughly every 8h while our in-memory copy goes stale, so
+            // more often than not a fresh one is already sitting there.
+            // Re-read and retry in the SAME pass; surfacing "token expired"
+            // here flashed the re-auth panel (and re-armed the keychain
+            // prompt on the follow-up read) once per rotation for a login
+            // that was actually fine. Only an identical or also-dead re-read
+            // token means the login truly needs `claude` to refresh it.
             case .unauthorized:
                 clearCache()
-                lastError = tokenExpiredMessage
+                if let fresh = readClaudeCreds(), fresh.accessToken != creds.accessToken {
+                    switch await probe(fresh.accessToken, fresh.subscriptionType ?? plan) {
+                    case .success(let u):       return .usage(u)
+                    case .rateLimited:          return .failed(rateLimitedMessage)
+                    case .unauthorized:
+                        clearCache()
+                        lastError = tokenExpiredMessage
+                    case .scopeInsufficient:
+                        clearCache()
+                        return .reauthRequired(reauthRequiredMessage)
+                    case .otherError(let e):    lastError = e
+                    }
+                } else {
+                    lastError = tokenExpiredMessage
+                }
             // A refresh re-issues the same scope set, so it cannot recover
             // from a missing-scope 403. Surface the only remediation that
             // actually works. Clear the cache so the re-minted token from
@@ -178,9 +195,16 @@ enum ClaudeCredentials {
     /// (nil results retry on the next poll). Invalidation: an unauthorized or
     /// scope-insufficient probe clears it in `resolveUsage` — the token was
     /// rotated or re-minted externally and the cached copy is stale — and the
-    /// in-app re-auth poll loop clears it before each fetch. Internal (not
-    /// private) so ResolveUsageTests can prime it and assert the clearing.
+    /// in-app re-auth poll loop clears it once the store fingerprint changes.
+    /// Internal (not private) so ResolveUsageTests can prime it and assert
+    /// the clearing.
     static var cachedClaudeCreds: ClaudeCreds?
+
+    /// Injectable keychain sources — production reads the real keychain;
+    /// ResolveUsageTests swap in fixtures so the 401 re-read/retry path never
+    /// pops the ACL prompt on the machine running the tests.
+    static var keychainCandidatesProvider: () -> [KeychainCandidate] = readClaudeKeychainCandidates
+    static var keychainModificationDatesProvider: () -> [Date] = claudeKeychainModificationDates
 
     static func clearCache() {
         cachedClaudeCreds = nil
@@ -204,7 +228,7 @@ enum ClaudeCredentials {
     private static func readClaudeCreds() -> ClaudeCreds? {
         if let cachedClaudeCreds { return cachedClaudeCreds }
         let creds = selectClaudeCreds(
-            from: readClaudeFileCandidates() + readClaudeKeychainCandidates())
+            from: readClaudeFileCandidates() + keychainCandidatesProvider())
         cachedClaudeCreds = creds
         return creds
     }
@@ -258,6 +282,36 @@ enum ClaudeCredentials {
                 KeychainCandidate(account: account, blob: $0)
             }
         }
+    }
+
+    /// Prompt-free "has the credential store changed?" snapshot: the newest
+    /// of the credentials file's mtime and the keychain items' modification
+    /// dates, both from metadata-only reads that never trip the ACL prompt.
+    /// The re-auth poll loop compares snapshots so it pays the secret read
+    /// (and its possible prompt) only once `claude auth login` has actually
+    /// written new credentials — not on every 5s tick.
+    static func credentialStoreFingerprint() -> Date? {
+        var dates = keychainModificationDatesProvider()
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: claudeCredentialsFilePath()),
+           let modified = attrs[.modificationDate] as? Date {
+            dates.append(modified)
+        }
+        return dates.max()
+    }
+
+    /// Modification date of every item under the service — attributes-only,
+    /// so no ACL prompt (see `claudeKeychainAccounts`).
+    private static func claudeKeychainModificationDates() -> [Date] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "Claude Code-credentials",
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+        ]
+        var result: CFTypeRef?
+        guard SecItemCopyMatching(query as CFDictionary, &result) == errSecSuccess,
+              let items = result as? [[String: Any]] else { return [] }
+        return items.compactMap { $0[kSecAttrModificationDate as String] as? Date }
     }
 
     /// Every account name under the "Claude Code-credentials" service. An
