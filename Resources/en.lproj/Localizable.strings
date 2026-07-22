@@ -41,6 +41,8 @@
 "Check for new versions in the background and notify you when one's available." = "Check for new versions in the background and notify you when one's available.";
 "Check for updates automatically" = "Check for updates automatically";
 "Check now" = "Check now";
+"Claude re-login needed" = "Claude re-login needed";
+"Claude session expired" = "Claude session expired";
 "Click to refresh now" = "Click to refresh now";
 "click to cycle" = "click to cycle";
 "Codex" = "Codex";

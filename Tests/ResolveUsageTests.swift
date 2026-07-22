@@ -34,9 +34,19 @@ struct ResolveUsageTests {
             exit(1)
         }
 
-        // Prime the creds cache so resolveUsage never reads the developer's
-        // real keychain — an actual read would pop the keychain ACL prompt on
-        // every test run and make results depend on the machine's login state.
+        // Hermetic credential sources: stub the keychain providers and pin
+        // CLAUDE_CONFIG_DIR at an empty fixture dir, so no code path (incl.
+        // the 401 re-read/retry) ever touches the developer's real keychain
+        // or ~/.claude — a real read would pop the ACL prompt on every test
+        // run and make results depend on the machine's login state.
+        let emptyConfigDir = NSTemporaryDirectory() + "codexisland-tests-empty-\(ProcessInfo.processInfo.processIdentifier)"
+        try? FileManager.default.createDirectory(atPath: emptyConfigDir, withIntermediateDirectories: true)
+        setenv("CLAUDE_CONFIG_DIR", emptyConfigDir, 1)
+        ClaudeCredentials.keychainCandidatesProvider = { [] }
+        ClaudeCredentials.keychainModificationDatesProvider = { [] }
+
+        // Prime the creds cache so T1/T2 drive the injected probe from a
+        // known token without any store read.
         ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
             account: "test-stub", accessToken: "stub-keychain-token", subscriptionType: nil)
 
@@ -129,19 +139,21 @@ struct ResolveUsageTests {
         let filePicked = ClaudeCredentials.selectClaudeCreds(from: fileCandidates)
         expect(filePicked?.accessToken == "file-at", "T5 file store candidate decodes and is selectable")
         expect(filePicked?.subscriptionType == "pro", "T5 file store carries subscriptionType")
-        // File store outranks a coexisting (stale) keychain item — Claude
-        // Code itself prefers the file when it exists.
-        let mixed = ClaudeCredentials.selectClaudeCreds(from: fileCandidates + [
+        // Keychain outranks a coexisting (stale) credentials file — Claude
+        // Code 2.x reads the keychain first and deletes/strands the file
+        // when a keychain write succeeds, so readClaudeCreds concatenates
+        // keychain candidates ahead of file candidates.
+        let mixed = ClaudeCredentials.selectClaudeCreds(from: [
             ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
-                "claudeAiOauth": ["accessToken": "stale-keychain-at"],
+                "claudeAiOauth": ["accessToken": "live-keychain-at"],
             ]),
-        ])
-        expect(mixed?.accessToken == "file-at", "T5 file store wins over a coexisting keychain item")
+        ] + fileCandidates)
+        expect(mixed?.accessToken == "live-keychain-at", "T5 keychain wins over a coexisting stale file")
         // Keep CLAUDE_CONFIG_DIR pinned to the (now deleted) fixture dir so
         // this assertion never touches a real ~/.claude on the dev machine.
         try? FileManager.default.removeItem(atPath: fixtureDir)
         expect(ClaudeCredentials.readClaudeFileCandidates().isEmpty, "T5 missing file yields no candidates")
-        unsetenv("CLAUDE_CONFIG_DIR")
+        setenv("CLAUDE_CONFIG_DIR", emptyConfigDir, 1)
 
         // T6 — auth-failure classification. UsageStore lets a terminal auth
         // error (expired token / missing scope) REPLACE a stale good value,
@@ -176,6 +188,231 @@ struct ResolveUsageTests {
             fiveHour: WindowUsage(usedPercent: 0.1, resetAt: nil, error: nil),
             weekly: WindowUsage(usedPercent: 0, resetAt: nil, error: ClaudeCredentials.tokenExpiredMessage))),
             "T6 single-window failure is NOT terminal (needs both)")
+
+        // T7 — expired cached token, rotated store (the recurring "Claude
+        // session expired" nag): Claude Code rotates the keychain item ~8h
+        // while our in-memory copy goes stale. A 401 on the cached token must
+        // re-read the store and retry within the SAME pass — surfacing
+        // "token expired" for a login that is fine flashed the re-auth panel
+        // (and re-armed the keychain-prompt cycle) once per rotation.
+        ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
+            account: "primed", accessToken: "stale-token", subscriptionType: "max")
+        ClaudeCredentials.keychainCandidatesProvider = { [
+            ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
+                "claudeAiOauth": ["accessToken": "rotated-token", "subscriptionType": "max"],
+            ]),
+        ] }
+        let t7 = ProbeCounter()
+        let r7 = await ClaudeCredentials.resolveUsage { token, _ in
+            t7.calls += 1
+            return token == "rotated-token" ? .success(fetched) : .unauthorized
+        }
+        // env stub (401) → stale cached token (401) → re-read → rotated (ok)
+        expect(t7.calls == 3, "T7 retries once with the re-read token (got \(t7.calls) probes)")
+        if case .usage = r7 {
+            expect(true, "T7 resolution is .usage despite the stale cached token")
+        } else {
+            expect(false, "T7 resolution is .usage despite the stale cached token")
+        }
+        expect(ClaudeCredentials.cachedClaudeCreds?.accessToken == "rotated-token",
+               "T7 cache now holds the rotated token")
+
+        // T7b — 401 with an UNrotated store (genuinely expired login): the
+        // re-read returns the same token, so there must be no retry probe —
+        // re-probing an identical dead token would loop a doomed request.
+        ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
+            account: "primed", accessToken: "stale-token", subscriptionType: "max")
+        ClaudeCredentials.keychainCandidatesProvider = { [
+            ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
+                "claudeAiOauth": ["accessToken": "stale-token"],
+            ]),
+        ] }
+        let t7b = ProbeCounter()
+        let r7b = await ClaudeCredentials.resolveUsage { _, _ in
+            t7b.calls += 1
+            return .unauthorized
+        }
+        expect(t7b.calls == 2, "T7b same re-read token is not re-probed (got \(t7b.calls) probes)")
+        if case .failed(let msg) = r7b {
+            expect(msg == ClaudeCredentials.tokenExpiredMessage, "T7b resolution is .failed(tokenExpiredMessage)")
+        } else {
+            expect(false, "T7b resolution is .failed(tokenExpiredMessage)")
+        }
+
+        // T7c — rotated store whose new token is ALSO dead (user logged out
+        // everywhere): retry once, then surface expired with the cache
+        // cleared so the next poll re-reads.
+        ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
+            account: "primed", accessToken: "stale-token", subscriptionType: "max")
+        ClaudeCredentials.keychainCandidatesProvider = { [
+            ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
+                "claudeAiOauth": ["accessToken": "rotated-token"],
+            ]),
+        ] }
+        let t7c = ProbeCounter()
+        let r7c = await ClaudeCredentials.resolveUsage { _, _ in
+            t7c.calls += 1
+            return .unauthorized
+        }
+        expect(t7c.calls == 3, "T7c dead rotated token probed exactly once (got \(t7c.calls) probes)")
+        if case .failed(let msg) = r7c {
+            expect(msg == ClaudeCredentials.tokenExpiredMessage, "T7c resolution is .failed(tokenExpiredMessage)")
+        } else {
+            expect(false, "T7c resolution is .failed(tokenExpiredMessage)")
+        }
+        expect(ClaudeCredentials.cachedClaudeCreds == nil, "T7c dead retry clears the creds cache")
+
+        // T7d — stale keychain leftover in FRONT of a live credentials file
+        // (old-CLI file mode, or multi-account keychains): the 401 retry
+        // excludes the dead token, so selection reaches the fresh credential
+        // behind it instead of giving up on the first match.
+        let t7dDir = NSTemporaryDirectory() + "codexisland-tests-t7d-\(ProcessInfo.processInfo.processIdentifier)"
+        try? FileManager.default.createDirectory(atPath: t7dDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: t7dDir + "/.credentials.json",
+            contents: Data("""
+            {"claudeAiOauth": {"accessToken": "file-fresh-at", "subscriptionType": "pro"}}
+            """.utf8))
+        setenv("CLAUDE_CONFIG_DIR", t7dDir, 1)
+        ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
+            account: "primed", accessToken: "stale-token", subscriptionType: "max")
+        ClaudeCredentials.keychainCandidatesProvider = { [
+            ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
+                "claudeAiOauth": ["accessToken": "stale-token"],
+            ]),
+        ] }
+        let t7d = ProbeCounter()
+        let r7d = await ClaudeCredentials.resolveUsage { token, _ in
+            t7d.calls += 1
+            return token == "file-fresh-at" ? .success(fetched) : .unauthorized
+        }
+        expect(t7d.calls == 3, "T7d retry reaches the file credential behind the stale keychain item (got \(t7d.calls) probes)")
+        if case .usage = r7d {
+            expect(true, "T7d resolution is .usage via the file credential")
+        } else {
+            expect(false, "T7d resolution is .usage via the file credential")
+        }
+        expect(ClaudeCredentials.cachedClaudeCreds?.accessToken == "file-fresh-at",
+               "T7d cache now holds the file credential")
+        try? FileManager.default.removeItem(atPath: t7dDir)
+        setenv("CLAUDE_CONFIG_DIR", emptyConfigDir, 1)
+        ClaudeCredentials.keychainCandidatesProvider = { [] }
+        ClaudeCredentials.clearCache()
+
+        // T8 — credential-store fingerprint (file half; the keychain half is
+        // an attributes-only SecItem query stubbed out here). The re-auth
+        // poll loop gates its secret reads on this changing, so it must
+        // track the file's mtime exactly and be nil with no store at all.
+        expect(ClaudeCredentials.credentialStoreFingerprint() == nil,
+               "T8 fingerprint is nil with no credential store")
+        let t8Dir = NSTemporaryDirectory() + "codexisland-tests-t8-\(ProcessInfo.processInfo.processIdentifier)"
+        try? FileManager.default.createDirectory(atPath: t8Dir, withIntermediateDirectories: true)
+        setenv("CLAUDE_CONFIG_DIR", t8Dir, 1)
+        let t8Path = t8Dir + "/.credentials.json"
+        FileManager.default.createFile(atPath: t8Path, contents: Data("{}".utf8))
+        let t8Early = Date(timeIntervalSince1970: 1_700_000_000)
+        let t8Late = Date(timeIntervalSince1970: 1_700_000_060)
+        try? FileManager.default.setAttributes([.modificationDate: t8Early], ofItemAtPath: t8Path)
+        expect(ClaudeCredentials.credentialStoreFingerprint() == t8Early,
+               "T8 fingerprint tracks the credentials file mtime")
+        try? FileManager.default.setAttributes([.modificationDate: t8Late], ofItemAtPath: t8Path)
+        expect(ClaudeCredentials.credentialStoreFingerprint() == t8Late,
+               "T8 fingerprint moves when the file is rewritten")
+        try? FileManager.default.removeItem(atPath: t8Dir)
+        setenv("CLAUDE_CONFIG_DIR", emptyConfigDir, 1)
+
+        // T9 — credential-service discovery predicate. Claude Code names the
+        // item "Claude Code-credentials" by default and suffixes "-<hash8>"
+        // per custom config dir; items are discovered by enumerating
+        // keychain metadata and filtering on this predicate, so it must
+        // accept both shapes and reject sibling services.
+        expect(ClaudeCredentials.isClaudeCredentialService("Claude Code-credentials"),
+               "T9 bare service name matches")
+        expect(ClaudeCredentials.isClaudeCredentialService("Claude Code-credentials-f4baf293"),
+               "T9 config-dir-suffixed service name matches")
+        expect(!ClaudeCredentials.isClaudeCredentialService("Claude Code-doctor-probe"),
+               "T9 doctor-probe sibling service does NOT match")
+        expect(!ClaudeCredentials.isClaudeCredentialService("Claude Code-credentialsx"),
+               "T9 non-dash suffix does NOT match")
+        expect(!ClaudeCredentials.isClaudeCredentialService("Claude Safe Storage"),
+               "T9 unrelated service does NOT match")
+
+        // T10 — scope-insufficient (403) gets the same stale-candidate walk
+        // as 401: a pre-scope keychain leftover in front of a fresh file
+        // credential must not short-circuit to the re-auth panel.
+        let t10Dir = NSTemporaryDirectory() + "codexisland-tests-t10-\(ProcessInfo.processInfo.processIdentifier)"
+        try? FileManager.default.createDirectory(atPath: t10Dir, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: t10Dir + "/.credentials.json",
+            contents: Data("""
+            {"claudeAiOauth": {"accessToken": "file-fresh-at", "subscriptionType": "pro"}}
+            """.utf8))
+        setenv("CLAUDE_CONFIG_DIR", t10Dir, 1)
+        ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
+            account: "primed", accessToken: "prescope-token", subscriptionType: "max")
+        ClaudeCredentials.keychainCandidatesProvider = { [
+            ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
+                "claudeAiOauth": ["accessToken": "prescope-token"],
+            ]),
+        ] }
+        let t10 = ProbeCounter()
+        let r10 = await ClaudeCredentials.resolveUsage { token, _ in
+            t10.calls += 1
+            if token == "file-fresh-at" { return .success(fetched) }
+            if token == "prescope-token" { return .scopeInsufficient }
+            return .unauthorized
+        }
+        expect(t10.calls == 3, "T10 walks past the scope-bad token to the file credential (got \(t10.calls) probes)")
+        if case .usage = r10 {
+            expect(true, "T10 resolution is .usage despite the scope-bad keychain leftover")
+        } else {
+            expect(false, "T10 resolution is .usage despite the scope-bad keychain leftover")
+        }
+        try? FileManager.default.removeItem(atPath: t10Dir)
+        setenv("CLAUDE_CONFIG_DIR", emptyConfigDir, 1)
+        ClaudeCredentials.keychainCandidatesProvider = { [] }
+        ClaudeCredentials.clearCache()
+
+        // T11 — scope-insufficient with nothing usable behind it still
+        // resolves to .reauthRequired (the panel's re-login state), not a
+        // generic failure.
+        ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
+            account: "primed", accessToken: "prescope-token", subscriptionType: "max")
+        ClaudeCredentials.keychainCandidatesProvider = { [
+            ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
+                "claudeAiOauth": ["accessToken": "prescope-token"],
+            ]),
+        ] }
+        let t11 = ProbeCounter()
+        let r11 = await ClaudeCredentials.resolveUsage { token, _ in
+            t11.calls += 1
+            return token == "prescope-token" ? .scopeInsufficient : .unauthorized
+        }
+        expect(t11.calls == 2, "T11 scope-bad token probed exactly once (got \(t11.calls) probes)")
+        if case .reauthRequired(let msg) = r11 {
+            expect(msg == ClaudeCredentials.reauthRequiredMessage, "T11 resolution is .reauthRequired")
+        } else {
+            expect(false, "T11 resolution is .reauthRequired")
+        }
+        ClaudeCredentials.keychainCandidatesProvider = { [] }
+        ClaudeCredentials.clearCache()
+
+        // T12 — blob decode accepts `security -w`'s hex dump. The CLI
+        // hex-encodes the secret when it contains any non-printable byte
+        // (the blob is written via `-X`, so arbitrary UTF-8 is possible);
+        // without this the CLI-primary read silently degrades to the
+        // prompting SecItem fallback for those users.
+        let t12JSON = "{\"claudeAiOauth\": {\"accessToken\": \"héllo-at\"}}"
+        let t12Hex = Data(t12JSON.utf8).map { String(format: "%02x", $0) }.joined()
+        let t12Decoded = ClaudeCredentials.decodeClaudeKeychainBlob(Data(t12Hex.utf8))
+        expect((t12Decoded?["claudeAiOauth"] as? [String: Any])?["accessToken"] as? String == "héllo-at",
+               "T12 hex-dumped blob decodes")
+        expect(ClaudeCredentials.decodeClaudeKeychainBlob(Data(t12JSON.utf8)) != nil,
+               "T12 plain JSON still decodes")
+        expect(ClaudeCredentials.decodeClaudeKeychainBlob(Data("deadbeef".utf8)) == nil,
+               "T12 hex of non-JSON yields nil")
+        expect(ClaudeCredentials.decodeClaudeKeychainBlob(Data("not json at all".utf8)) == nil,
+               "T12 garbage yields nil")
 
         // The store and views match these exact strings; a reword is a
         // breaking change for them, not a copy edit.
