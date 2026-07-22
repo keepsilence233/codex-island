@@ -233,24 +233,34 @@ final class UsageStore: ObservableObject {
             // round-trip (browser cold start, SSO redirect, 2FA prompt)
             // resolves in time, short enough to not strand the UI.
             var baseline = ClaudeCredentials.credentialStoreFingerprint()
+            var sawStoreWrite = false
             for _ in 0..<24 {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 if Task.isCancelled { return }
                 // Wait for `claude auth login` to actually write the new
                 // credentials before paying the secret read: the fingerprint
                 // is metadata-only (never prompts), while clearing the cache
-                // and fetching does a full keychain read — doing that on
-                // every 5s tick was up to 24 ACL prompts per re-auth on
-                // machines without a durable "Always Allow" grant.
-                // Re-baselining below means each store WRITE costs exactly
-                // one fetch, instead of every remaining tick fetching (and
-                // feeding the sticky account limiter) once anything changed.
+                // does a full keychain read on the next fetch — doing that
+                // on every 5s tick was up to 24 ACL prompts per re-auth on
+                // machines without a durable "Always Allow" grant. After the
+                // first observed write, keep RETRYING from the cached
+                // credential (zero extra secret reads) so one transient
+                // network failure doesn't strand the button on "waiting for
+                // browser…" until the deadline; the cache is cleared again
+                // only when the store changes again.
                 let current = ClaudeCredentials.credentialStoreFingerprint()
-                guard current != baseline else { continue }
-                baseline = current
-                ClaudeCredentials.clearCache()
+                if current != baseline {
+                    baseline = current
+                    sawStoreWrite = true
+                    ClaudeCredentials.clearCache()
+                }
+                guard sawStoreWrite else { continue }
                 let cl = await UsageFetcher.fetchClaude()
                 if Task.isCancelled { return }
+                // The usage limiter is sticky once tripped (see
+                // rateLimitCooldown) — retrying every 5s only feeds it. Bail
+                // and let the normal poll's cooldown machinery recover.
+                if cl.fiveHour.error == ClaudeCredentials.rateLimitedMessage { break }
                 if cl.fiveHour.error == nil || cl.weekly.error == nil {
                     await MainActor.run {
                         self?.claude = cl
