@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import Security
 
@@ -210,13 +211,14 @@ enum ClaudeCredentials {
         cachedClaudeCreds = nil
     }
 
-    /// Reads Claude Code's login from the file store or keychain, or nil if
+    /// Reads Claude Code's login from the keychain or file store, or nil if
     /// there isn't a usable one — the caller then falls through to the next
-    /// token source. The file store (`~/.claude/.credentials.json`) comes
-    /// FIRST: when the file exists, Claude Code itself reads and maintains it
-    /// in preference to the keychain, so a coexisting keychain item is a
-    /// stale leftover (issue #54 — users delete the keychain item to escape
-    /// its ACL prompts, and the file never prompts at all).
+    /// token source. The KEYCHAIN comes first: Claude Code 2.x reads the
+    /// keychain as primary and, when a keychain write succeeds, deletes (or
+    /// strands) `.credentials.json` — so a coexisting file is the stale
+    /// leftover, not the keychain item. Matching the CLI's own read order
+    /// keeps us on whichever store it is actually maintaining. (This is the
+    /// reverse of the pre-2.x assumption shipped in #56.)
     ///
     /// Keychain shape: Claude Code stores several generic-password items
     /// under the SAME service "Claude Code-credentials": the subscription
@@ -228,7 +230,7 @@ enum ClaudeCredentials {
     private static func readClaudeCreds() -> ClaudeCreds? {
         if let cachedClaudeCreds { return cachedClaudeCreds }
         let creds = selectClaudeCreds(
-            from: readClaudeFileCandidates() + keychainCandidatesProvider())
+            from: keychainCandidatesProvider() + readClaudeFileCandidates())
         cachedClaudeCreds = creds
         return creds
     }
@@ -236,10 +238,11 @@ enum ClaudeCredentials {
     // MARK: - File store
 
     /// Claude Code's file-based credential store, same JSON shape as the
-    /// keychain blob. Default on Linux; on macOS users opt in (and typically
-    /// delete the keychain item). `CLAUDE_CONFIG_DIR` relocates `~/.claude`
-    /// — rarely set for a LaunchServices-spawned GUI app, but honored to
-    /// match Claude Code's resolution.
+    /// keychain blob. Default on Linux; on macOS the CLI falls back to it
+    /// only when the keychain is unavailable (SSH sessions, locked keychain)
+    /// — there is no setting to force it. `CLAUDE_CONFIG_DIR` relocates
+    /// `~/.claude` — rarely set for a LaunchServices-spawned GUI app, but
+    /// honored to match Claude Code's resolution.
     private static func claudeCredentialsFilePath() -> String {
         let configDir = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"]
             ?? "\(NSHomeDirectory())/.claude"
@@ -284,6 +287,25 @@ enum ClaudeCredentials {
         }
     }
 
+    /// Keychain service name of Claude Code's credential item. With a custom
+    /// config dir (`CLAUDE_CONFIG_DIR`, or the CLI-internal override
+    /// `CLAUDE_SECURESTORAGE_CONFIG_DIR`) Claude Code suffixes the service
+    /// with the first 8 hex chars of sha256(dir) — querying only the bare
+    /// name makes those users' logins invisible (issue #54 follow-up). An
+    /// explicitly EMPTY securestorage override means "default" even when
+    /// CLAUDE_CONFIG_DIR is set, mirroring the CLI's own resolution.
+    /// Internal + env-injectable so ResolveUsageTests can lock the format.
+    static func claudeKeychainService(env: [String: String] = ProcessInfo.processInfo.environment) -> String {
+        let base = "Claude Code-credentials"
+        let secure = env["CLAUDE_SECURESTORAGE_CONFIG_DIR"]
+        let isDefault = secure.map(\.isEmpty) ?? (env["CLAUDE_CONFIG_DIR"] ?? "").isEmpty
+        guard !isDefault else { return base }
+        let dir = (secure ?? env["CLAUDE_CONFIG_DIR"] ?? "").precomposedStringWithCanonicalMapping
+        let hex = SHA256.hash(data: Data(dir.utf8))
+            .map { String(format: "%02x", $0) }.joined().prefix(8)
+        return "\(base)-\(hex)"
+    }
+
     /// Prompt-free "has the credential store changed?" snapshot: the newest
     /// of the credentials file's mtime and the keychain items' modification
     /// dates, both from metadata-only reads that never trip the ACL prompt.
@@ -304,7 +326,7 @@ enum ClaudeCredentials {
     private static func claudeKeychainModificationDates() -> [Date] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
+            kSecAttrService as String: claudeKeychainService(),
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
         ]
@@ -320,7 +342,7 @@ enum ClaudeCredentials {
     private static func claudeKeychainAccounts() -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
+            kSecAttrService as String: claudeKeychainService(),
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
         ]
@@ -332,19 +354,25 @@ enum ClaudeCredentials {
 
     /// Decoded JSON blob of one account's item, or nil on any read/parse error.
     ///
-    /// Primary path is an in-process `SecItemCopyMatching`, so the keychain
-    /// ACL prompt is attributed to CodexIsland (and "Always Allow" grants
-    /// this app) instead of the generic `/usr/bin/security` binary. The CLI
-    /// fallback stays default-ON: the app is ad-hoc signed, so its keychain
-    /// identity changes with every build and a previously granted in-process
-    /// ACL entry can stop matching after an update. `security` is
-    /// Apple-signed with a stable identity, so a grant to it persists — a
-    /// denied/failed SecItem read must degrade to the old working path, not
-    /// to silently-missing Claude usage.
+    /// Primary path shells out to `/usr/bin/security` — the ONLY reader that
+    /// never trips the keychain ACL prompt. Claude Code rewrites this item
+    /// with `security add-generic-password -U` on every ~8h token rotation,
+    /// and that rewrite RESETS the item's partition list to `apple-tool:`
+    /// (verified empirically) — silently wiping any per-app "Always Allow"
+    /// grant within hours of the user typing their password for it. No
+    /// app-side grant can survive, Developer-ID-signed or not. `security`
+    /// itself lives in the `apple-tool:` partition and in the item's ACL
+    /// (Claude Code creates the item through it), so its reads stay silent
+    /// forever, across every app update. The in-process SecItem read remains
+    /// only as a fallback for the day the CLI path breaks — it is the path
+    /// that CAN prompt.
     private static func readClaudeKeychainBlob(account: String) -> [String: Any]? {
+        if let blob = readClaudeKeychainBlobViaSecurityCLI(account: account) {
+            return blob
+        }
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "Claude Code-credentials",
+            kSecAttrService as String: claudeKeychainService(),
             kSecAttrAccount as String: account,
             kSecMatchLimit as String: kSecMatchLimitOne,
             kSecReturnData as String: true,
@@ -352,8 +380,8 @@ enum ClaudeCredentials {
         var result: CFTypeRef?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         guard status == errSecSuccess, let data = result as? Data else {
-            NSLog("CodexIsland: SecItemCopyMatching for Claude credentials failed (OSStatus %d), falling back to security CLI", status)
-            return readClaudeKeychainBlobViaSecurityCLI(account: account)
+            NSLog("CodexIsland: security CLI and in-process SecItem read both failed for Claude credentials (OSStatus %d)", status)
+            return nil
         }
         return decodeClaudeKeychainBlob(data)
     }
@@ -367,7 +395,7 @@ enum ClaudeCredentials {
         task.launchPath = "/usr/bin/security"
         task.arguments = [
             "find-generic-password",
-            "-s", "Claude Code-credentials",
+            "-s", claudeKeychainService(),
             "-a", account,
             "-w",
         ]

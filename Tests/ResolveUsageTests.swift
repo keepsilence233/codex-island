@@ -139,14 +139,16 @@ struct ResolveUsageTests {
         let filePicked = ClaudeCredentials.selectClaudeCreds(from: fileCandidates)
         expect(filePicked?.accessToken == "file-at", "T5 file store candidate decodes and is selectable")
         expect(filePicked?.subscriptionType == "pro", "T5 file store carries subscriptionType")
-        // File store outranks a coexisting (stale) keychain item — Claude
-        // Code itself prefers the file when it exists.
-        let mixed = ClaudeCredentials.selectClaudeCreds(from: fileCandidates + [
+        // Keychain outranks a coexisting (stale) credentials file — Claude
+        // Code 2.x reads the keychain first and deletes/strands the file
+        // when a keychain write succeeds, so readClaudeCreds concatenates
+        // keychain candidates ahead of file candidates.
+        let mixed = ClaudeCredentials.selectClaudeCreds(from: [
             ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
-                "claudeAiOauth": ["accessToken": "stale-keychain-at"],
+                "claudeAiOauth": ["accessToken": "live-keychain-at"],
             ]),
-        ])
-        expect(mixed?.accessToken == "file-at", "T5 file store wins over a coexisting keychain item")
+        ] + fileCandidates)
+        expect(mixed?.accessToken == "live-keychain-at", "T5 keychain wins over a coexisting stale file")
         // Keep CLAUDE_CONFIG_DIR pinned to the (now deleted) fixture dir so
         // this assertion never touches a real ~/.claude on the dev machine.
         try? FileManager.default.removeItem(atPath: fixtureDir)
@@ -283,6 +285,29 @@ struct ResolveUsageTests {
                "T8 fingerprint moves when the file is rewritten")
         try? FileManager.default.removeItem(atPath: t8Dir)
         setenv("CLAUDE_CONFIG_DIR", emptyConfigDir, 1)
+
+        // T9 — keychain service name. Claude Code suffixes the service with
+        // the first 8 hex chars of sha256(configDir) when a custom config
+        // dir is set (and an explicitly EMPTY securestorage override means
+        // default even then). Wrong name = custom-dir users' logins are
+        // invisible. Vectors precomputed with `sha256(dir).hexdigest()[:8]`.
+        expect(ClaudeCredentials.claudeKeychainService(env: [:]) == "Claude Code-credentials",
+               "T9 default env yields the bare service name")
+        expect(ClaudeCredentials.claudeKeychainService(env: ["CLAUDE_CONFIG_DIR": ""]) == "Claude Code-credentials",
+               "T9 empty CLAUDE_CONFIG_DIR yields the bare service name")
+        expect(ClaudeCredentials.claudeKeychainService(env: ["CLAUDE_CONFIG_DIR": "/tmp/codexisland-test-config"])
+               == "Claude Code-credentials-f4baf293",
+               "T9 CLAUDE_CONFIG_DIR suffixes with first 8 sha256 hex chars")
+        expect(ClaudeCredentials.claudeKeychainService(env: [
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR": "/tmp/codexisland-secure-config",
+            "CLAUDE_CONFIG_DIR": "/tmp/codexisland-test-config",
+        ]) == "Claude Code-credentials-08673229",
+               "T9 securestorage override outranks CLAUDE_CONFIG_DIR")
+        expect(ClaudeCredentials.claudeKeychainService(env: [
+            "CLAUDE_SECURESTORAGE_CONFIG_DIR": "",
+            "CLAUDE_CONFIG_DIR": "/tmp/codexisland-test-config",
+        ]) == "Claude Code-credentials",
+               "T9 empty securestorage override forces the default name")
 
         // The store and views match these exact strings; a reword is a
         // breaking change for them, not a copy edit.
