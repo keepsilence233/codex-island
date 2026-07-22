@@ -261,6 +261,41 @@ struct ResolveUsageTests {
             expect(false, "T7c resolution is .failed(tokenExpiredMessage)")
         }
         expect(ClaudeCredentials.cachedClaudeCreds == nil, "T7c dead retry clears the creds cache")
+
+        // T7d — stale keychain leftover in FRONT of a live credentials file
+        // (old-CLI file mode, or multi-account keychains): the 401 retry
+        // excludes the dead token, so selection reaches the fresh credential
+        // behind it instead of giving up on the first match.
+        let t7dDir = NSTemporaryDirectory() + "codexisland-tests-t7d-\(ProcessInfo.processInfo.processIdentifier)"
+        try? FileManager.default.createDirectory(atPath: t7dDir, withIntermediateDirectories: true)
+        FileManager.default.createFile(
+            atPath: t7dDir + "/.credentials.json",
+            contents: Data("""
+            {"claudeAiOauth": {"accessToken": "file-fresh-at", "subscriptionType": "pro"}}
+            """.utf8))
+        setenv("CLAUDE_CONFIG_DIR", t7dDir, 1)
+        ClaudeCredentials.cachedClaudeCreds = ClaudeCredentials.ClaudeCreds(
+            account: "primed", accessToken: "stale-token", subscriptionType: "max")
+        ClaudeCredentials.keychainCandidatesProvider = { [
+            ClaudeCredentials.KeychainCandidate(account: "ericpark", blob: [
+                "claudeAiOauth": ["accessToken": "stale-token"],
+            ]),
+        ] }
+        let t7d = ProbeCounter()
+        let r7d = await ClaudeCredentials.resolveUsage { token, _ in
+            t7d.calls += 1
+            return token == "file-fresh-at" ? .success(fetched) : .unauthorized
+        }
+        expect(t7d.calls == 3, "T7d retry reaches the file credential behind the stale keychain item (got \(t7d.calls) probes)")
+        if case .usage = r7d {
+            expect(true, "T7d resolution is .usage via the file credential")
+        } else {
+            expect(false, "T7d resolution is .usage via the file credential")
+        }
+        expect(ClaudeCredentials.cachedClaudeCreds?.accessToken == "file-fresh-at",
+               "T7d cache now holds the file credential")
+        try? FileManager.default.removeItem(atPath: t7dDir)
+        setenv("CLAUDE_CONFIG_DIR", emptyConfigDir, 1)
         ClaudeCredentials.keychainCandidatesProvider = { [] }
         ClaudeCredentials.clearCache()
 

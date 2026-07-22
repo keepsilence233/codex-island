@@ -134,11 +134,14 @@ enum ClaudeCredentials {
             // Re-read and retry in the SAME pass; surfacing "token expired"
             // here flashed the re-auth panel (and re-armed the keychain
             // prompt on the follow-up read) once per rotation for a login
-            // that was actually fine. Only an identical or also-dead re-read
-            // token means the login truly needs `claude` to refresh it.
+            // that was actually fine. The re-read skips candidates still
+            // holding the token that just 401'd, so a fresh credential
+            // behind a stale first item is reached too. Only when nothing
+            // else exists (or the re-read token is also dead) does the
+            // login truly need `claude` to refresh it.
             case .unauthorized:
                 clearCache()
-                if let fresh = readClaudeCreds(), fresh.accessToken != creds.accessToken {
+                if let fresh = readClaudeCreds(excludingToken: creds.accessToken) {
                     switch await probe(fresh.accessToken, fresh.subscriptionType ?? plan) {
                     case .success(let u):       return .usage(u)
                     case .rateLimited:          return .failed(rateLimitedMessage)
@@ -227,10 +230,11 @@ enum ClaudeCredentials {
     /// blind lookup can land on the mcpOAuth item and miss the real login —
     /// the bug where the panel showed no Claude usage. Read every item and
     /// let `selectClaudeCreds` pick by content rather than by "first item".
-    private static func readClaudeCreds() -> ClaudeCreds? {
-        if let cachedClaudeCreds { return cachedClaudeCreds }
+    private static func readClaudeCreds(excludingToken excluded: String? = nil) -> ClaudeCreds? {
+        if excluded == nil, let cachedClaudeCreds { return cachedClaudeCreds }
         let creds = selectClaudeCreds(
-            from: keychainCandidatesProvider() + readClaudeFileCandidates())
+            from: keychainCandidatesProvider() + readClaudeFileCandidates(),
+            excludingToken: excluded)
         cachedClaudeCreds = creds
         return creds
     }
@@ -260,11 +264,17 @@ enum ClaudeCredentials {
     /// First candidate carrying a usable `claudeAiOauth` (non-empty access
     /// token). Pure — exposed for ResolveUsageTests, which locks down the
     /// multi-item selection. An empty-token item is a logged-out remnant,
-    /// skipped so a later account still gets its chance.
-    static func selectClaudeCreds(from candidates: [KeychainCandidate]) -> ClaudeCreds? {
+    /// skipped so a later account still gets its chance. `excludingToken`
+    /// skips candidates holding a token that just 401'd, so the 401 retry
+    /// can reach a fresh credential sitting BEHIND a stale first candidate
+    /// (stale keychain leftover + live file, or multi-account keychains)
+    /// instead of giving up on the first match.
+    static func selectClaudeCreds(from candidates: [KeychainCandidate],
+                                  excludingToken excluded: String? = nil) -> ClaudeCreds? {
         for candidate in candidates {
             guard let oauth = candidate.blob["claudeAiOauth"] as? [String: Any],
-                  let access = oauth["accessToken"] as? String, !access.isEmpty else { continue }
+                  let access = oauth["accessToken"] as? String, !access.isEmpty,
+                  access != excluded else { continue }
             return ClaudeCreds(
                 account: candidate.account,
                 accessToken: access,
