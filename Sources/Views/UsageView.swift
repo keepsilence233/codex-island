@@ -135,7 +135,11 @@ struct ReauthState: View {
                 .font(.system(size: 20, weight: .regular))
                 .foregroundStyle(color.opacity(0.85))
             if ClaudeCredentials.canPromptReauth() {
-                Text(L10n.tr("Claude session expired"))
+                // A scope-insufficient token (403) is not "expired" — only a
+                // fresh `claude /login` re-issues the missing scope, so say
+                // what is actually wrong (CodeRabbit finding on #59).
+                Text(L10n.tr(usage.fiveHour.error == ClaudeCredentials.reauthRequiredMessage
+                    ? "Claude re-login needed" : "Claude session expired"))
                     .font(Typography.label)
                     .foregroundStyle(.white.opacity(0.55))
                 ReauthButton()

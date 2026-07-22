@@ -41,6 +41,8 @@
 "Check for new versions in the background and notify you when one's available." = "在后台检查新版本，有可用更新时通知你。";
 "Check for updates automatically" = "自动检查更新";
 "Check now" = "立即检查";
+"Claude re-login needed" = "Claude 需要重新登录";
+"Claude session expired" = "Claude 会话已过期";
 "Click to refresh now" = "点击立即刷新";
 "click to cycle" = "点击切换";
 "Codex" = "Codex";
