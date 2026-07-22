@@ -232,7 +232,7 @@ final class UsageStore: ObservableObject {
             // ~2 minutes total — generous enough that even a slow OAuth
             // round-trip (browser cold start, SSO redirect, 2FA prompt)
             // resolves in time, short enough to not strand the UI.
-            let baseline = ClaudeCredentials.credentialStoreFingerprint()
+            var baseline = ClaudeCredentials.credentialStoreFingerprint()
             for _ in 0..<24 {
                 try? await Task.sleep(nanoseconds: 5_000_000_000)
                 if Task.isCancelled { return }
@@ -242,7 +242,12 @@ final class UsageStore: ObservableObject {
                 // and fetching does a full keychain read — doing that on
                 // every 5s tick was up to 24 ACL prompts per re-auth on
                 // machines without a durable "Always Allow" grant.
-                guard ClaudeCredentials.credentialStoreFingerprint() != baseline else { continue }
+                // Re-baselining below means each store WRITE costs exactly
+                // one fetch, instead of every remaining tick fetching (and
+                // feeding the sticky account limiter) once anything changed.
+                let current = ClaudeCredentials.credentialStoreFingerprint()
+                guard current != baseline else { continue }
+                baseline = current
                 ClaudeCredentials.clearCache()
                 let cl = await UsageFetcher.fetchClaude()
                 if Task.isCancelled { return }
